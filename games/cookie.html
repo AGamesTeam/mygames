@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+        <title>Cookie Clicker — Games</title>
+    <link rel="stylesheet" href="../css/styles.css" />
+</head>
+<body class="game-page">
+    <a class="home" href="../index.html">← Home</a>
+    <div class="title">Cookie Clicker</div>
+
+    <div class="cookie-wrap">
+        <div class="top-row">
+            <div class="cookie-area">
+                <img id="cookie" src="../cookie.png" alt="Cookie" />
+                <div id="counter">0</div>
+                <div style="color:var(--muted); font-size:13px; margin-top:6px" id="cps">CPS: 0</div>
+            </div>
+
+            <div class="shop">
+                <div class="card" data-id="autoclicker"><h3>Auto Clicker</h3><p>+1 CPS each</p><div class="meta"><div id="autoCost">50</div><button data-buy="autoclicker">Buy</button></div></div>
+                <div class="card" data-id="oven"><h3>Golden Oven</h3><p>+2 per click</p><div class="meta"><div id="ovenCost">250</div><button data-buy="oven">Buy</button></div></div>
+                <div class="card" data-id="factory"><h3>Factory</h3><p>+10 CPS</p><div class="meta"><div id="factoryCost">1200</div><button data-buy="factory">Buy</button></div></div>
+                <div class="card" data-id="lucky"><h3>Lucky Charm</h3><p>Small chance for bonus</p><div class="meta"><div id="luckyCost">800</div><button data-buy="lucky">Buy</button></div></div>
+            </div>
+        </div>
+
+        <div id="effects"></div>
+
+        <div class="admin-panel">
+            <input id="adminCode" placeholder="Enter admin code (cheat#1)" />
+            <button id="applyCode">Apply</button>
+            <div id="adminMsg" style="color:var(--muted); font-size:13px"></div>
+        </div>
+
+        <!-- admin menu hidden by default -->
+        <div id="adminMenu" style="display:none; width:100%; margin-top:12px">
+            <div style="background:rgba(255,255,255,0.02); padding:12px; border-radius:10px; display:flex; gap:12px;">
+                <div style="flex:1">
+                    <div style="font-weight:800; margin-bottom:8px">Admin Controls</div>
+                    <div style="display:flex; gap:8px; align-items:center">
+                        <input id="adminCookiesAmount" type="number" placeholder="Cookies amount" style="padding:8px; border-radius:8px; background:transparent; border:1px solid rgba(255,255,255,0.04); color:#fff; width:160px" />
+                        <button id="adminGrantCookies" style="background:linear-gradient(90deg,#10b981,#059669); color:white; padding:8px 10px; border-radius:8px; border:none; font-weight:700">Give Cookies</button>
+                    </div>
+                </div>
+                <div style="width:220px; display:flex; flex-direction:column; gap:8px; align-items:flex-end">
+                    <button id="adminClose" style="background:#111827; color:var(--accent); padding:8px 10px; border-radius:8px; border:none; font-weight:800">Close Admin Menu</button>
+                    <div id="adminStatus" style="color:var(--muted); font-size:13px; text-align:right">Admin locked</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // simplified copy of the game's logic (adapted for this page)
+        let name = 'Andrus67pro';
+        const cookie = document.getElementById('cookie');
+        const counter = document.getElementById('counter');
+        const cpsLabel = document.getElementById('cps');
+
+        let cookies = 0; let cps = 0; let clickValue = 1; let best = 0;
+        const shop = { autoclicker:{owned:0,cost:50,cps:1}, oven:{owned:0,cost:250,clickBoost:2}, factory:{owned:0,cost:1200,cps:10}, lucky:{owned:0,cost:800,chance:0.12} };
+
+        function fmt(n){ return Math.floor(n); }
+        function updateUI(){ counter.innerText = fmt(cookies); cpsLabel.innerText = 'CPS: ' + cps; document.getElementById('autoCost').innerText = shop.autoclicker.cost; document.getElementById('ovenCost').innerText = shop.oven.cost; document.getElementById('factoryCost').innerText = shop.factory.cost; document.getElementById('luckyCost').innerText = shop.lucky.cost; }
+
+        function floatText(x,y,text){ const el=document.createElement('div'); el.className='float'; el.style.left=x+'px'; el.style.top=y+'px'; el.innerText=text; document.body.appendChild(el); requestAnimationFrame(()=>{ el.style.transition='transform 900ms cubic-bezier(.2,.9,.2,1), opacity 900ms'; el.style.transform='translateY(-80px) scale(1.05)'; el.style.opacity='0'; }); setTimeout(()=>el.remove(),950); }
+        function spawnParticles(x,y,color='#60a5fa'){ for(let i=0;i<8;i++){ const p=document.createElement('div'); p.className='particle'; p.style.left=x+'px'; p.style.top=y+'px'; p.style.background=color; document.body.appendChild(p); const dx=(Math.random()-0.5)*160; const dy=-Math.random()*120-20; const s=6+Math.random()*8; p.style.width=s+'px'; p.style.height=s+'px'; requestAnimationFrame(()=>{ p.style.transition='transform 900ms ease-out, opacity 900ms'; p.style.transform=`translate(${dx}px, ${dy}px) scale(0.2)`; p.style.opacity='0'; }); setTimeout(()=>p.remove(),900); } }
+
+        cookie.addEventListener('click',()=>{ const rect=cookie.getBoundingClientRect(); const x=rect.left+rect.width/2+(Math.random()-0.5)*50; const y=rect.top+rect.height/2+(Math.random()-0.5)*30; let gain=clickValue; if(shop.lucky.owned>0 && Math.random()<shop.lucky.chance){ const bonus=Math.round(gain*8+Math.random()*50); gain+=bonus; floatText(x,y,'BONUS +' + bonus); spawnParticles(x,y,'#7dd3fc'); } cookies+=gain; best=Math.max(best,cookies); floatText(x,y,'+'+gain); spawnParticles(x,y,'#60a5fa'); updateUI(); });
+
+        document.querySelectorAll('[data-buy]').forEach(btn=>{ btn.addEventListener('click',()=>{ const id=btn.getAttribute('data-buy'); const item=shop[id]; if(!item) return; if(cookies>=item.cost){ cookies-=item.cost; item.owned=(item.owned||0)+1; if(item.cps) cps+=item.cps; if(item.clickBoost) clickValue+=item.clickBoost; item.cost=Math.round(item.cost*(1.6+Math.random()*0.2)); const rect=btn.getBoundingClientRect(); floatText(rect.left+rect.width/2,rect.top,'Purchased'); spawnParticles(rect.left+rect.width/2,rect.top,'#7dd3fc'); updateUI(); } else { const rect=btn.getBoundingClientRect(); floatText(rect.left+rect.width/2,rect.top,'Need '+(item.cost-fmt(cookies))); spawnParticles(rect.left+rect.width/2,rect.top,'#60a5fa'); } }); });
+
+        // admin menu logic
+        const adminInput=document.getElementById('adminCode'); const applyBtn=document.getElementById('applyCode'); const adminMsg=document.getElementById('adminMsg'); const adminMenu=document.getElementById('adminMenu'); const adminStatus=document.getElementById('adminStatus');
+        function grantItem(id,amount){ const it=shop[id]; if(!it) return; it.owned=(it.owned||0)+amount; if(it.cps) cps+=it.cps*amount; if(it.clickBoost) clickValue+=it.clickBoost*amount; }
+        function applyAdminCode(code){ code=(code||'').trim().toLowerCase(); if(code==='cheat#1'){ adminMenu.style.display=''; adminMsg.innerText='Admin menu unlocked.'; adminStatus.innerText='Admin unlocked — use controls to grant items.'; floatText(window.innerWidth/2,window.innerHeight/2,'ADMIN UNLOCKED'); spawnParticles(window.innerWidth/2,window.innerHeight/2,'#7dd3fc'); return true; } adminMsg.innerText='Unknown code.'; return false; }
+        applyBtn.addEventListener('click',()=>{ applyAdminCode(adminInput.value); }); adminInput.addEventListener('keydown',(e)=>{ if(e.key==='Enter') applyBtn.click(); });
+
+        document.getElementById('adminGrantCookies').addEventListener('click',()=>{ const amt=parseInt(document.getElementById('adminCookiesAmount').value)||0; if(amt>0){ cookies+=amt; floatText(window.innerWidth/2,window.innerHeight/2,'+'+amt+' cookies'); spawnParticles(window.innerWidth/2,window.innerHeight/2,'#60a5fa'); adminMsg.innerText='Granted '+amt+' cookies.'; updateUI(); } });
+        document.getElementById('adminClose').addEventListener('click',()=>{ adminMenu.style.display='none'; adminMsg.innerText='Admin menu closed.'; });
+
+        setInterval(()=>{ const delta=cps/5; cookies+=delta; updateUI(); },200);
+        updateUI();
+    </script>
+    <div class="bloom" aria-hidden="true"></div>
+</body>
+</html>

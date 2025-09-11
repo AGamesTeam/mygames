@@ -1,0 +1,113 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Snake — Games</title>
+  <style>
+    :root{ --bg1:#071032; --bg2:#08142a; --accent:#60a5fa; --muted:#9fb6d8 }
+    html,body{height:100%}
+    body{ margin:0; font-family:Inter,system-ui,-apple-system,'Segoe UI',Roboto,Arial; background:radial-gradient(1200px 600px at 10% 10%, rgba(96,165,250,0.04), transparent), linear-gradient(180deg,var(--bg1),var(--bg2)); color:#fff; display:flex; flex-direction:column; align-items:center; padding:28px }
+    a.home{ position:fixed; left:20px; top:20px; color:var(--accent); text-decoration:none; font-weight:700 }
+    .title{ font-size:28px; font-weight:800; color:var(--accent); margin-bottom:12px }
+    .board-wrap{ display:flex; gap:18px; align-items:flex-start; width:920px; max-width:calc(100% - 40px) }
+    .panel{ background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01)); padding:12px; border-radius:12px }
+    canvas{ background:linear-gradient(180deg,#04203a,#031428); border-radius:8px; box-shadow:0 12px 40px rgba(6,18,70,0.6) }
+    .controls{ display:flex; gap:8px; margin-top:8px }
+    button{ background:linear-gradient(90deg,#07112a,#0b1220); color:var(--accent); border:none; padding:8px 10px; border-radius:8px; font-weight:800 }
+    .score{ color:var(--accent); font-weight:800 }
+    .bloom{ position:fixed; left:0; top:0; width:100%; height:100%; pointer-events:none; mix-blend-mode:screen; opacity:0.9 }
+  </style>
+</head>
+<body>
+  <a class="home" href="../index.html">← Home</a>
+  <div class="title">Snake</div>
+  <div class="board-wrap">
+    <div class="panel">
+      <canvas id="board" width="480" height="480"></canvas>
+      <div class="controls">
+        <div class="score">Score: <span id="score">0</span></div>
+        <button id="restart">Restart</button>
+      </div>
+    </div>
+    <div style="flex:1; display:flex; flex-direction:column; gap:8px; align-items:flex-start">
+      <div style="background:rgba(255,255,255,0.02); padding:12px; border-radius:10px; width:100%">
+        <div style="font-weight:800; margin-bottom:8px">How to play</div>
+        <div style="color:var(--muted)">Use arrow keys or WASD to move. Eat apples to grow. Avoid walls and yourself.</div>
+      </div>
+      <div style="background:rgba(255,255,255,0.02); padding:12px; border-radius:10px; width:100%">
+        <div style="font-weight:800; margin-bottom:8px">Tips</div>
+        <div style="color:var(--muted)">Plan turns ahead and don't trap yourself.</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('board');
+    const ctx = canvas.getContext('2d');
+    const grid = 20; // size of cell
+    let snake = [{x:8,y:8}];
+    let dir = {x:0,y:0};
+    let apple = {x:12,y:10};
+    let score = 0;
+    let speed = 8; // frames per second
+    let running = true;
+
+    function reset(){ snake = [{x:8,y:8}]; dir={x:0,y:0}; placeApple(); score=0; running=true; document.getElementById('score').innerText = score; }
+    function placeApple(){ apple.x = Math.floor(Math.random()* (canvas.width/grid)); apple.y = Math.floor(Math.random()* (canvas.height/grid)); }
+
+    function draw(){
+      // background
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      // draw apple
+      ctx.fillStyle = '#ef4444';
+      ctx.fillRect(apple.x*grid, apple.y*grid, grid-2, grid-2);
+      // draw snake
+      for(let i=0;i<snake.length;i++){
+        ctx.fillStyle = i===0 ? '#60a5fa' : '#7dd3fc';
+        ctx.fillRect(snake[i].x*grid, snake[i].y*grid, grid-2, grid-2);
+      }
+    }
+
+    function step(){
+      if(!running) return;
+      // move head
+      const head = { x: snake[0].x + dir.x, y: snake[0].y + dir.y };
+      // wall collision
+      if(head.x < 0 || head.x >= canvas.width/grid || head.y < 0 || head.y >= canvas.height/grid){ running=false; return; }
+      // self collision
+      for(let i=0;i<snake.length;i++) if(head.x===snake[i].x && head.y===snake[i].y){ running=false; return; }
+      snake.unshift(head);
+      // eat apple
+      if(head.x===apple.x && head.y===apple.y){ score++; document.getElementById('score').innerText = score; placeApple(); }
+      else snake.pop();
+    }
+
+    let last = 0;
+    function loop(ts){
+      requestAnimationFrame(loop);
+      if(!last) last=ts;
+      const elapsed = (ts-last)/1000;
+      if(elapsed < 1/speed) return;
+      last = ts;
+      step();
+      draw();
+    }
+
+    window.addEventListener('keydown', (e)=>{
+      const k = e.key;
+      if(k==='ArrowUp' || k==='w' || k==='W'){ if(dir.y!==1) dir={x:0,y:-1}; }
+      if(k==='ArrowDown' || k==='s' || k==='S'){ if(dir.y!==-1) dir={x:0,y:1}; }
+      if(k==='ArrowLeft' || k==='a' || k==='A'){ if(dir.x!==1) dir={x:-1,y:0}; }
+      if(k==='ArrowRight' || k==='d' || k==='D'){ if(dir.x!==-1) dir={x:1,y:0}; }
+    });
+
+    document.getElementById('restart').addEventListener('click', ()=>{ reset(); });
+
+    // init
+    reset();
+    requestAnimationFrame(loop);
+  </script>
+  <div class="bloom" aria-hidden="true"></div>
+</body>
+</html>
