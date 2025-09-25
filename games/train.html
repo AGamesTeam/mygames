@@ -1,0 +1,179 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Train Traffic Simulator — Games</title>
+  <link rel="stylesheet" href="../css/styles.css" />
+  <style>
+  .sim-wrap{ display:flex; gap:18px; width:980px; max-width:calc(100% - 40px); margin-top:22px; align-items:flex-start }
+  .panel{ background:linear-gradient(180deg, rgba(255,255,255,0.015), rgba(255,255,255,0.01)); padding:14px; border-radius:12px; width:260px }
+  #simCanvas{ background:linear-gradient(180deg,#021022,#04142a); border-radius:10px; box-shadow:0 12px 40px rgba(6,18,70,0.6); flex:1; max-width:100%; height:auto }
+  .controls button, .controls select{ background:linear-gradient(90deg,#07112a,#0b1220); color:var(--accent); border-radius:8px; padding:8px 12px; border:none; font-weight:800 }
+  .row{ display:flex; gap:8px; flex-wrap:wrap }
+  #tutorial{ font-size:13px; line-height:1.4; color:var(--muted); margin-top:12px }
+  #tutorial b{ color:var(--accent) }
+  .stat-grid{ display:grid; grid-template-columns:auto auto; gap:4px 12px; font-size:13px; margin-top:8px }
+  #simOverlay{ position:absolute; left:0; top:0; width:100%; height:100%; pointer-events:none; display:flex; align-items:center; justify-content:center }
+  #simOverlay span{ background:rgba(5,15,30,0.7); padding:16px 26px; border-radius:14px; font-weight:800; font-size:28px; color:var(--accent); backdrop-filter:blur(4px); box-shadow:0 8px 40px rgba(6,18,70,0.5) }
+  @media (max-width:1050px){ .sim-wrap{ flex-direction:column; width:100%; } .panel{ width:100%; } }
+  @media (max-width:620px){ .panel{ padding:12px; } .stat-grid{ grid-template-columns: auto auto; } }
+  @media (max-width:600px){ #simCanvas{ width:100% !important; } }
+  </style>
+</head>
+<body class="game-page">
+  <a class="home" href="../index.html">← Home</a>
+  <div style="display:flex; align-items:center; gap:12px;">
+    <div class="title">Train Traffic Simulator</div>
+    <div style="color:var(--muted); font-size:13px">Control signals to prevent crashes</div>
+  </div>
+
+  <div class="sim-wrap">
+    <div style="position:relative; flex:1; min-width:640px">
+      <canvas id="simCanvas" width="760" height="480"></canvas>
+      <div id="simOverlay" style="display:none"><span id="overlayText">PAUSED</span></div>
+    </div>
+    <div class="controls panel" style="display:flex; flex-direction:column; gap:12px">
+      <div style="font-weight:800; font-size:16px">Controls</div>
+      <div class="row">
+        <button id="startBtn">Start</button>
+        <button id="pauseBtn" disabled>Pause</button>
+        <button id="resetBtn" disabled>Reset</button>
+      </div>
+      <div class="row" style="align-items:center">
+        <label style="font-size:13px; color:var(--muted); display:flex; gap:6px; align-items:center">Speed
+          <select id="speedSelect">
+            <option value="0.5">0.5x</option>
+            <option value="1" selected>1x</option>
+            <option value="1.5">1.5x</option>
+            <option value="2">2x</option>
+            <option value="3">3x</option>
+          </select>
+        </label>
+        <label style="font-size:13px; color:var(--muted); display:flex; gap:6px; align-items:center">Difficulty
+          <select id="difficultySelect">
+            <option value="easy" selected>Easy</option>
+            <option value="medium">Medium</option>
+            <option value="hard">Hard</option>
+          </select>
+        </label>
+      </div>
+      <div class="row" style="align-items:center">
+        <button id="genBtn">Generate Map</button>
+      </div>
+      <div style="font-weight:800">Stats</div>
+      <div class="stat-grid">
+        <div>Time</div><div><span id="timeLabel">0</span>s</div>
+        <div>Trains</div><div><span id="activeLabel">0</span></div>
+        <div>Crashes</div><div><span id="crashLabel">0</span></div>
+        <div>Passed</div><div><span id="passedLabel">0</span></div>
+        <div>Level</div><div><span id="levelLabel">1</span></div>
+        <div>Target</div><div><span id="targetLabel">10</span></div>
+      </div>
+      <div id="tutorial">
+        <b>Tutorial</b><br/>
+        Procedural network: Generate a random map. Each intersection has ONE light (circle).<br/>
+        1. All lights start RED. Click a node to turn it GREEN so trains can pass it.<br/>
+        2. Trains spawn from outer nodes and travel to a different outer node.<br/>
+        3. Avoid crashes: two trains colliding at a node ends the level.<br/>
+        4. Higher difficulty = more nodes, faster spawns, faster trains.<br/>
+        Tip: Flash greens only when a train is close, then turn back red.
+      </div>
+    </div>
+  </div>
+
+  <div class="bloom" aria-hidden="true"></div>
+
+  <script>
+  const canvas = document.getElementById('simCanvas');
+  const ctx = canvas.getContext('2d');
+  const startBtn = document.getElementById('startBtn');
+  const pauseBtn = document.getElementById('pauseBtn');
+  const resetBtn = document.getElementById('resetBtn');
+  const genBtn = document.getElementById('genBtn');
+  const speedSelect = document.getElementById('speedSelect');
+  const diffSelect = document.getElementById('difficultySelect');
+  const timeLabel = document.getElementById('timeLabel');
+  const activeLabel = document.getElementById('activeLabel');
+  const crashLabel = document.getElementById('crashLabel');
+  const passedLabel = document.getElementById('passedLabel');
+  const overlay = document.getElementById('simOverlay');
+  const overlayText = document.getElementById('overlayText');
+  let nextLevelBtn=null;
+
+  let running=false, paused=false, simTime=0, lastTs=0, speedFactor=1;
+  let spawnTimer=0, spawnInterval=2.2;
+  let crashCount=0, passedCount=0;
+  let currentLevel=1; let targetPass=10; let levelCompleteFlag=false;
+  let trains=[]; let gridNodes=[]; let edges=[]; let signals=[]; let nodeMap={};
+
+  function randChoice(a){ return a[Math.floor(Math.random()*a.length)]; }
+  function linePath(x1,y1,x2,y2,steps){ const pts=[]; for(let i=0;i<=steps;i++){ const t=i/steps; pts.push({x:x1+(x2-x1)*t, y:y1+(y2-y1)*t}); } return pts; }
+
+  function difficultyParams(){
+    switch(diffSelect.value){
+      case 'easy': return {spawn: Math.max(2.5 - (currentLevel-1)*0.05, 1.4), baseSpeed:[70,110]};
+      case 'medium': return {spawn: Math.max(1.9 - (currentLevel-1)*0.06, 0.9), baseSpeed:[90,140]};
+      case 'hard': return {spawn: Math.max(1.2 - (currentLevel-1)*0.05, 0.4), baseSpeed:[110,170]};
+    }
+    return {spawn:2.5, baseSpeed:[70,110]};
+  }
+
+  function generateMap(){
+    const {spawn}=difficultyParams();
+    const bounds={left:40, top:40, right:canvas.width-40, bottom:canvas.height-40};
+    const diff=diffSelect.value;
+    const base = diff==='easy'?5: diff==='medium'?8:11;
+    const variance = diff==='easy'?2: diff==='medium'?3:4;
+    const count = base + Math.floor(Math.random()*variance) + Math.floor(currentLevel*0.4);
+    const minDist=55;
+    gridNodes=[]; edges=[]; signals=[]; nodeMap={};
+    let attempts=0;
+    while(gridNodes.length < count && attempts < count*50){
+      attempts++;
+      const x=bounds.left + Math.random()*(bounds.right-bounds.left);
+      const y=bounds.top + Math.random()*(bounds.bottom-bounds.top);
+      if(gridNodes.some(n=>{const dx=n.x-x, dy=n.y-y; return dx*dx+dy*dy < minDist*minDist;})) continue;
+      const id='n_'+gridNodes.length.toString(36)+Date.now().toString(36).slice(-3)+Math.floor(Math.random()*100).toString(36);
+      const node={id,x,y}; gridNodes.push(node); nodeMap[id]=node; signals.push({id:'S_'+id,nodeId:id,state:'red'});
+    }
+    if(gridNodes.length<2){ const a={id:'n_a',x:bounds.left+80,y:bounds.top+80}; const b={id:'n_b',x:bounds.right-80,y:bounds.bottom-80}; gridNodes=[a,b]; nodeMap={n_a:a,n_b:b}; signals=[{id:'S_n_a',nodeId:'n_a',state:'red'},{id:'S_n_b',nodeId:'n_b',state:'red'}]; }
+    const steps=140;
+    for(const n of gridNodes){
+      const sorted=[...gridNodes].filter(m=>m!==n).sort((a,b)=>((a.x-n.x)**2+(a.y-n.y)**2)-((b.x-n.x)**2+(b.y-n.y)**2));
+      const k=2+Math.floor(Math.random()*2);
+      for(let i=0;i<Math.min(k,sorted.length);i++){ const m=sorted[i]; if(!edges.some(e=>e.from===n.id&&e.to===m.id)){ edges.push({id:`E_${n.id}_${m.id}`,from:n.id,to:m.id,points:linePath(n.x,n.y,m.x,m.y,steps)}); edges.push({id:`E_${m.id}_${n.id}`,from:m.id,to:n.id,points:linePath(m.x,m.y,n.x,n.y,steps)}); } }
+    }
+    const extra=Math.floor(gridNodes.length*0.6);
+    for(let i=0;i<extra;i++){ const a=gridNodes[Math.floor(Math.random()*gridNodes.length)], b=gridNodes[Math.floor(Math.random()*gridNodes.length)]; if(a===b) continue; if(edges.some(e=>e.from===a.id&&e.to===b.id)) continue; if(Math.random()<0.55){ edges.push({id:`E_${a.id}_${b.id}`,from:a.id,to:b.id,points:linePath(a.x,a.y,b.x,b.y,steps)}); edges.push({id:`E_${b.id}_${a.id}`,from:b.id,to:a.id,points:linePath(b.x,b.y,a.x,a.y,steps)}); } }
+    spawnInterval=spawn; trains=[]; crashCount=0; passedCount=0; simTime=0; spawnTimer=0; levelCompleteFlag=false; draw(); updateLabels();
+  }
+
+  function randomTrainColor(){ return randChoice(['#60a5fa','#f472b6','#facc15','#34d399','#f97316']); }
+  function perimeterNodes(){ if(!gridNodes.length) return []; const xs=gridNodes.map(n=>n.x), ys=gridNodes.map(n=>n.y); const minX=Math.min(...xs), maxX=Math.max(...xs), minY=Math.min(...ys), maxY=Math.max(...ys); const pad=60; return gridNodes.filter(n=> n.x-minX<pad||maxX-n.x<pad||n.y-minY<pad||maxY-n.y<pad); }
+  function neighbors(id){ return edges.filter(e=>e.from===id).map(e=>nodeMap[e.to]).filter(Boolean); }
+  function findEdge(a,b){ return edges.find(e=>e.from===a&&e.to===b); }
+  function routeBetween(a,b){ if(a===b) return null; const q=[a], prev={}, vis={[a]:true}; while(q.length){ const cur=q.shift(); if(cur===b) break; let ns=neighbors(cur).map(n=>n.id); for(let i=ns.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [ns[i],ns[j]]=[ns[j],ns[i]]; } for(const nb of ns){ if(!vis[nb]){ vis[nb]=true; prev[nb]=cur; q.push(nb); } } } if(!prev[b]) return null; const nodes=[b]; while(nodes[nodes.length-1]!==a){ nodes.push(prev[nodes[nodes.length-1]]); } nodes.reverse(); let pts=[]; for(let i=0;i<nodes.length-1;i++){ const e=findEdge(nodes[i],nodes[i+1]); if(!e) return null; if(i>0) pts.pop(); pts=pts.concat(e.points); } return pts; }
+  function spawnTrain(){ const per=perimeterNodes(); if(per.length<2) return; const start=randChoice(per); let end=start; let guard=0; while(end===start && guard<60){ end=randChoice(per); guard++; } const {baseSpeed}=difficultyParams(); let route=null, attempts=0; while(!route && attempts<20){ route=routeBetween(start.id,end.id); attempts++; end= attempts>5 && !route ? randChoice(per):end; } if(!route) return; const speed=baseSpeed[0]+Math.random()*(baseSpeed[1]-baseSpeed[0]); trains.push({id:Math.random().toString(36).slice(2,7), path:route, pos:0, velocity:0, targetSpeed:speed, length:38+Math.random()*42, color:randomTrainColor(), done:false}); }
+  function nodeAtPosition(pt,thr=18){ return gridNodes.find(n=>{ const dx=n.x-pt.x, dy=n.y-pt.y; return dx*dx+dy*dy < thr*thr; }); }
+  function signalsForNode(n){ return signals.filter(s=>s.nodeId===n.id); }
+  function trainPoint(tr){ const arr=tr.path; if(tr.pos>=arr.length-1) return arr[arr.length-1]; const i=Math.floor(tr.pos), f=tr.pos-i; const a=arr[i], b=arr[i+1]; return {x:a.x+(b.x-a.x)*f, y:a.y+(b.y-a.y)*f}; }
+  function update(dt){ simTime+=dt; spawnTimer+=dt; if(spawnTimer>=spawnInterval){ spawnTimer=0; spawnTrain(); } const removal=[]; for(const tr of trains){ if(tr.done) continue; let mustStop=false; for(let look=0; look<60; look+=10){ const testPos=Math.min(tr.pos+look, tr.path.length-1); const testPt=tr.path[Math.floor(testPos)]; const nd=nodeAtPosition(testPt,16); if(nd){ const sig=signalsForNode(nd)[0]; if(sig && sig.state==='red') mustStop=true; break; } } const accel=160; const target=mustStop?0:tr.targetSpeed; if(tr.velocity<target) tr.velocity=Math.min(target,tr.velocity+accel*dt); else if(tr.velocity>target) tr.velocity=Math.max(target,tr.velocity-accel*dt*1.3); tr.pos += tr.velocity*dt; if(tr.pos >= tr.path.length-1){ tr.done=true; removal.push(tr); passedCount++; } } for(const r of removal){ const i=trains.indexOf(r); if(i>=0) trains.splice(i,1); } outer: for(let i=0;i<trains.length;i++){ for(let j=i+1;j<trains.length;j++){ const a=trainPoint(trains[i]), b=trainPoint(trains[j]); const dx=a.x-b.x, dy=a.y-b.y; if(dx*dx+dy*dy < 900){ crashCount++; running=false; paused=false; overlay.style.display='flex'; overlayText.textContent='CRASH'; break outer; } } } if(!levelCompleteFlag && passedCount>=targetPass && crashCount===0){ levelCompleteFlag=true; running=false; paused=false; showLevelComplete(); } updateLabels(); }
+  function updateLabels(){ timeLabel.textContent=Math.floor(simTime); activeLabel.textContent=trains.length; crashLabel.textContent=crashCount; passedLabel.textContent=passedCount; document.getElementById('levelLabel').textContent=currentLevel; document.getElementById('targetLabel').textContent=targetPass; }
+  function computeTarget(){ const base=10; targetPass = base + Math.floor(currentLevel*(diffSelect.value==='hard'?6: diffSelect.value==='medium'?4:3)); }
+  function showLevelComplete(){ overlay.style.display='flex'; overlayText.textContent='LEVEL '+currentLevel+' COMPLETE'; if(!nextLevelBtn){ nextLevelBtn=document.createElement('button'); nextLevelBtn.textContent='Next Level'; nextLevelBtn.style.cssText='position:absolute; top:calc(50% + 70px); background:linear-gradient(90deg,#07112a,#0b1220); color:var(--accent); border:none; padding:10px 18px; border-radius:10px; font-weight:800; cursor:pointer;'; overlay.parentElement.appendChild(nextLevelBtn); nextLevelBtn.addEventListener('click',()=>{ nextLevelBtn.blur(); nextLevel(); }); } nextLevelBtn.style.display='block'; }
+  function hideLevelButton(){ if(nextLevelBtn) nextLevelBtn.style.display='none'; }
+  function nextLevel(){ currentLevel++; computeTarget(); levelCompleteFlag=false; overlay.style.display='none'; hideLevelButton(); regenerate(); start(); }
+  let clickableSignals=[];
+  function draw(){ ctx.clearRect(0,0,canvas.width,canvas.height); ctx.lineCap='round'; for(const e of edges){ ctx.beginPath(); ctx.lineWidth=8; ctx.strokeStyle='rgba(255,255,255,0.05)'; const pts=e.points; for(let i=0;i<pts.length;i++){ const p=pts[i]; if(i===0) ctx.moveTo(p.x,p.y); else ctx.lineTo(p.x,p.y); } ctx.stroke(); } clickableSignals=[]; gridNodes.forEach(n=>{ ctx.beginPath(); ctx.fillStyle='rgba(255,255,255,0.08)'; ctx.arc(n.x,n.y,10,0,Math.PI*2); ctx.fill(); const sig=signalsForNode(n)[0]; if(sig){ ctx.beginPath(); ctx.fillStyle = sig.state==='green'? '#7df5ff':'#ff7b7b'; ctx.arc(n.x,n.y,7,0,Math.PI*2); ctx.fill(); clickableSignals.push({sx:n.x, sy:n.y, r:12, sig}); } }); trains.forEach(tr=>{ const p=trainPoint(tr); const aheadIdx=Math.min(tr.pos+4,tr.path.length-1); const ahead=tr.path[Math.floor(aheadIdx)]; const angle=Math.atan2(ahead.y-p.y,ahead.x-p.x); ctx.save(); ctx.translate(p.x,p.y); ctx.rotate(angle); ctx.fillStyle=tr.color; ctx.fillRect(-tr.length/2,-8,tr.length,16); ctx.fillStyle='rgba(255,255,255,0.6)'; for(let x=-tr.length/2+6; x<tr.length/2-4; x+=10){ ctx.fillRect(x,-4,6,8); } ctx.restore(); }); }
+  function loop(ts){ if(!running){ draw(); return; } if(!lastTs) lastTs=ts; const dt=(ts-lastTs)/1000; lastTs=ts; if(!paused) update(dt*speedFactor); draw(); requestAnimationFrame(loop); }
+  function start(){ if(running || levelCompleteFlag) return; running=true; paused=false; overlay.style.display='none'; startBtn.disabled=true; pauseBtn.disabled=false; resetBtn.disabled=false; lastTs=0; hideLevelButton(); requestAnimationFrame(loop); }
+  function pauseToggle(){ if(!running) return; paused=!paused; overlay.style.display = paused? 'flex':'none'; overlayText.textContent='PAUSED'; pauseBtn.textContent = paused? 'Resume':'Pause'; }
+  function reset(){ running=false; paused=false; overlay.style.display='none'; startBtn.disabled=false; pauseBtn.disabled=true; pauseBtn.textContent='Pause'; resetBtn.disabled=true; trains=[]; crashCount=0; passedCount=0; simTime=0; spawnTimer=0; levelCompleteFlag=false; hideLevelButton(); signals.forEach(s=> s.state='red'); updateLabels(); draw(); }
+  function regenerate(){ const wasRunning=running; running=false; paused=false; startBtn.disabled=false; pauseBtn.disabled=true; pauseBtn.textContent='Pause'; resetBtn.disabled=true; levelCompleteFlag=false; hideLevelButton(); generateMap(); if(wasRunning) start(); }
+  canvas.addEventListener('click',e=>{ const r=canvas.getBoundingClientRect(); const x=e.clientX-r.left, y=e.clientY-r.top; let closest=null, best=9999; for(const cs of clickableSignals){ const dx=cs.sx-x, dy=cs.sy-y; const d=Math.sqrt(dx*dx+dy*dy); if(d<cs.r && d<best){ best=d; closest=cs; } } if(closest){ closest.sig.state = closest.sig.state==='green' ? 'red':'green'; draw(); } });
+  startBtn.addEventListener('click',start); pauseBtn.addEventListener('click',pauseToggle); resetBtn.addEventListener('click',reset); genBtn.addEventListener('click',()=>{ currentLevel=1; computeTarget(); regenerate(); }); speedSelect.addEventListener('change',()=>{ speedFactor=parseFloat(speedSelect.value)||1; }); diffSelect.addEventListener('change',()=>{ currentLevel=1; computeTarget(); regenerate(); });
+  computeTarget(); generateMap();
+  </script>
+</body>
+</html>

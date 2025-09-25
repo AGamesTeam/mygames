@@ -1,0 +1,633 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Server Manager — Games</title>
+<link rel="stylesheet" href="../css/styles.css" />
+<style>
+  body.game-page{ align-items:center; }
+  .wrap{ width:960px; max-width:calc(100% - 40px); margin-top:24px; display:flex; gap:18px; }
+  .left{ flex:1; position:relative; }
+  canvas{ background:linear-gradient(180deg,#061225,#0a1c34); width:100%; height:auto; border-radius:12px; box-shadow:0 16px 50px rgba(6,18,70,0.6); cursor:crosshair }
+  .panel{ width:300px; background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01)); padding:16px; border-radius:12px; display:flex; flex-direction:column; gap:12px }
+  .panel h2{ margin:0; font-size:18px; font-weight:800; color:var(--accent) }
+  button, select{ background:linear-gradient(90deg,#07112a,#0b1220); color:var(--accent); border:none; padding:8px 12px; border-radius:8px; font-weight:700; cursor:pointer }
+  .money{ font-size:20px; font-weight:800; color:var(--accent) }
+  .room-info{ font-size:13px; color:var(--muted) }
+  .servers-list{ display:grid; grid-template-columns:repeat(auto-fill,minmax(120px,1fr)); gap:8px; }
+  .mini{ font-size:11px; color:var(--muted); }
+  .popup{ position:fixed; left:0; top:0; width:100%; height:100%; background:rgba(5,15,30,0.7); backdrop-filter:blur(4px); display:none; align-items:center; justify-content:center; z-index:50 }
+  .popup-card{ background:linear-gradient(180deg,#0a1c34,#071327); padding:24px 30px; border-radius:16px; width:340px; text-align:center; box-shadow:0 18px 60px rgba(6,18,70,0.6); }
+  .popup-card h3{ margin:0 0 8px 0; font-size:22px; font-weight:800; color:var(--accent) }
+  #buyPopup .popup-card{ width:760px; max-width:90%; text-align:left; }
+  .server-list{ max-height:380px; overflow:auto; display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:12px; margin-top:12px; }
+  .server-item{ background:#0f2744; border:1px solid rgba(255,255,255,0.08); padding:10px 12px; border-radius:10px; display:flex; flex-direction:column; gap:4px; position:relative; }
+  .server-item h4{ margin:0; font-size:13px; font-weight:700; color:var(--accent); }
+  .spec{ font-size:11px; color:var(--muted); line-height:1.3 }
+  .badge{ display:inline-block; font-size:10px; padding:2px 6px; border-radius:12px; background:#102f58; color:#60a5fa; margin-right:4px; }
+  .buy-btn{ align-self:flex-start; margin-top:4px; font-size:11px; padding:4px 8px; }
+  .upgrades-list{ display:flex; flex-direction:column; gap:10px; }
+  .upgrade-item{ background:#0f2744; border:1px solid rgba(255,255,255,0.08); padding:10px 12px; border-radius:10px; display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  .upgrade-item h5{ margin:0; font-size:13px; font-weight:700; color:var(--accent) }
+  .tiny{ font-size:10px; color:var(--muted); }
+  .task-area{ background:#081d36; border:1px solid rgba(255,255,255,0.06); padding:10px; border-radius:10px; font-size:13px; min-height:120px; display:flex; flex-direction:column; gap:6px }
+  .arrow-nav{ display:flex; gap:8px }
+  .server-box{ position:absolute; width:120px; height:70px; border-radius:12px; display:flex; flex-direction:column; justify-content:center; align-items:center; font-size:12px; font-weight:700; box-shadow:0 6px 16px rgba(0,0,0,0.4); transition:transform 120ms ease, box-shadow 120ms ease }
+  .server-box.alive{ background:linear-gradient(180deg,#0e2a52,#143a6d); border:1px solid rgba(96,165,250,0.2); }
+  .server-box.dead{ background:linear-gradient(180deg,#3b0d0d,#220606); border:1px solid rgba(255,120,120,0.35); }
+  .server-box:hover{ transform:translateY(-4px); box-shadow:0 10px 28px rgba(10,40,80,0.5) }
+  .buy-hint{ position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); font-size:13px; color:var(--muted); pointer-events:none; text-align:center }
+  .room-arrows{ position:absolute; right:12px; top:12px; display:flex; gap:6px }
+  .room-arrows button{ padding:4px 10px; font-size:12px }
+  .flash{ animation:flash 0.6s ease-in-out infinite alternate; }
+  .server-box.hacked{ background:linear-gradient(180deg,#4a2d04,#271701); border:1px solid rgba(250,204,21,0.4); }
+  .danger{ color:#f87171; font-weight:700 }
+  .accent{ color:var(--accent); font-weight:700 }
+  @keyframes flash{ from{ filter:brightness(1); } to{ filter:brightness(1.6); } }
+  @media (max-width:1000px){ .wrap{ flex-direction:column; } .panel{ width:100%; order:-1 } }
+</style>
+</head>
+<body class="game-page">
+<a class="home" href="../index.html">← Home</a>
+<div class="title">Server Manager</div>
+<div class="wrap">
+  <div class="left">
+    <div class="room-arrows">
+      <button id="prevRoom" disabled>◀</button>
+      <div style="font-size:13px; color:var(--muted); font-weight:700" id="roomLabel">Room 1</div>
+      <button id="nextRoom" disabled>▶</button>
+    </div>
+  <div id="buyHint" class="buy-hint">Use the Buy button to fill rack slots ($150)</div>
+    <canvas id="serverCanvas" width="760" height="480"></canvas>
+  </div>
+  <div class="panel">
+    <h2>Overview</h2>
+  <div class="money">$<span id="money">200</span></div>
+  <div style="font-size:13px; color:var(--muted)">Income: $<span id="incomeRate">0</span>/s (<span id="incomeMult">x1.00</span>)</div>
+    <div class="room-info">Servers in room: <span id="roomCount">0</span>/20<br/>Total servers: <span id="totalServers">0</span></div>
+  <button id="buyServer">Buy Server</button>
+  <div class="mini">(Click crashed servers to repair them)</div>
+    <div style="font-weight:800; margin-top:4px">Status Log</div>
+    <div id="log" style="background:#081d36; border:1px solid rgba(255,255,255,0.06); min-height:120px; max-height:160px; overflow:auto; font-size:12px; padding:6px; border-radius:8px"></div>
+    <div style="font-weight:800">Hints</div>
+    <ul style="margin:0 0 6px 16px; padding:0; font-size:12px; line-height:1.5; color:var(--muted)">
+      <li>A server will rarely even crash but when it does → fix it via quick minigame.</li>
+      <li>Stay zoomed in this room; navigate rooms using arrow buttons.</li>
+      <li>Max 20 servers per room. New rooms unlock automatically.</li>
+      <li>Keep everything running for passive stability bonuses (later).</li>
+    </ul>
+  </div>
+</div>
+
+<div id="crashPopup" class="popup">
+  <div class="popup-card">
+    <h3>Server Crash!</h3>
+    <div style="font-size:13px; color:var(--muted); margin-bottom:10px" id="crashServerLabel">A server failed.</div>
+    <div class="task-area" id="taskArea">
+      <!-- minigame injected here -->
+    </div>
+    <div style="display:flex; gap:8px; justify-content:center; margin-top:12px">
+      <button id="goToServer">Go To Server</button>
+      <button id="closeCrash" style="background:#13263e">Close</button>
+    </div>
+  </div>
+</div>
+
+<div id="buyPopup" class="popup">
+  <div class="popup-card">
+    <h3>Purchase Servers</h3>
+    <div style="font-size:12px; color:var(--muted)">Select a model. Beginner boost active for first 10 servers (50% cost +2 security).</div>
+    <div class="server-list" id="serverList"></div>
+    <div style="display:flex; justify-content:flex-end; margin-top:12px"><button id="closeBuy" style="background:#13263e">Close</button></div>
+  </div>
+</div>
+
+<div id="upgradePopup" class="popup">
+  <div class="popup-card" style="width:500px; max-width:92%">
+    <h3>Security Upgrades</h3>
+    <div style="font-size:12px; color:var(--muted)">Improve global defense. Reduces hack chance & crash severity.</div>
+    <div class="upgrades-list" id="upgradesList"></div>
+    <div style="display:flex; justify-content:flex-end; margin-top:12px"><button id="closeUpgrades" style="background:#13263e">Close</button></div>
+  </div>
+</div>
+
+<div id="specPopup" class="popup">
+  <div class="popup-card" style="width:420px; max-width:92%; text-align:left">
+    <h3>Server Info</h3>
+    <div id="specContent" style="font-size:12px; line-height:1.5; color:var(--muted)"></div>
+    <div style="display:flex; justify-content:flex-end; margin-top:12px"><button id="closeSpec" style="background:#13263e">Close</button></div>
+  </div>
+</div>
+
+<div class="bloom" aria-hidden="true"></div>
+<script>
+const canvas = document.getElementById('serverCanvas');
+const ctx = canvas.getContext('2d');
+const buyBtn = document.getElementById('buyServer');
+const moneyEl = document.getElementById('money');
+const incomeRateEl = document.getElementById('incomeRate');
+const incomeMultEl = document.getElementById('incomeMult');
+const logEl = document.getElementById('log');
+const roomLabel = document.getElementById('roomLabel');
+const prevRoomBtn = document.getElementById('prevRoom');
+const nextRoomBtn = document.getElementById('nextRoom');
+const roomCountEl = document.getElementById('roomCount');
+const totalServersEl = document.getElementById('totalServers');
+const crashPopup = document.getElementById('crashPopup');
+const crashServerLabel = document.getElementById('crashServerLabel');
+const goToServerBtn = document.getElementById('goToServer');
+const closeCrashBtn = document.getElementById('closeCrash');
+const taskArea = document.getElementById('taskArea');
+const buyHint = document.getElementById('buyHint');
+// new popup elements
+const buyPopup = document.getElementById('buyPopup');
+const serverListEl = document.getElementById('serverList');
+const closeBuyBtn = document.getElementById('closeBuy');
+const upgradePopup = document.getElementById('upgradePopup');
+const upgradesListEl = document.getElementById('upgradesList');
+const closeUpgradesBtn = document.getElementById('closeUpgrades');
+const specPopup = document.getElementById('specPopup');
+const specContent = document.getElementById('specContent');
+const closeSpecBtn = document.getElementById('closeSpec');
+
+let money = 200;
+// Each room: { id, slots:[{x,y,server:null}], servers:[] }
+let rooms = [ createRoom(1) ];
+let currentRoomIndex = 0;
+let nextServerId = 1;
+const SERVER_COST = 150;
+const MAX_SERVERS_PER_ROOM = 20;
+let crashQueue = [];
+let activeCrash = null; // currently opened crash repair
+let crashedServers = new Set(); // track crashed server ids (allow multiple crashes)
+let crashTimer = 0;
+let incomeAccum = 0; // for throttled UI update
+let nextCrashIn = randomCrashDelay();
+let nextHackIn = randomHackDelay();
+let hackTimer = 0;
+let activeHighStakes = null; // {roomIndex, serverIds}
+let running = true; // simple loop
+
+// Beginner easing
+const BEGINNER_THRESHOLD = 10;
+const BEGINNER_COST_MULT = 0.5;
+const BEGINNER_SECURITY_BONUS = 2;
+
+// Security & upgrades
+let globalSecurityLevel = 0;
+let securityUpgrades = [
+  { id:'firewall', name:'Adaptive Firewall', level:0, baseCost:500, effect:'+1 global security, -4% hack chance' },
+  { id:'siem', name:'SIEM Analytics', level:0, baseCost:1200, effect:'+2 global security, -8% hack chance' },
+  { id:'redundancy', name:'Hardware Redundancy', level:0, baseCost:900, effect:'Crashes less likely (-10%)' },
+  { id:'patcher', name:'Auto Patcher', level:0, baseCost:1500, effect:'+1 security, failed repairs less destructive' },
+];
+
+// Server models (100 synthetic realistic)
+const serverModels = (()=>{
+  const vendors = ['Dell PowerEdge','HPE ProLiant','Lenovo ThinkSystem','Cisco UCS','Supermicro Ultra','Fujitsu Primergy','Oracle Sun','IBM System','Inspur NF','Huawei Fusion'];
+  const cpus = ['Xeon Silver','Xeon Gold','Xeon Platinum','EPYC 7313','EPYC 7453','EPYC 7551','EPYC 7763','Threadripper Pro','ARM Neoverse','Ampere Altra'];
+  const arr=[]; let id=1;
+  for(let i=0;i<100;i++){
+    const vendor=vendors[i%vendors.length];
+    const cpu=cpus[i%cpus.length];
+    const cores=8+(i%10)*4;
+    const gen=2+(i%6);
+    const baseCost=140 + i*6;
+    const power=1 + (cores/10) + gen*0.35;
+    const security=1 + ( (i%7)*0.5 );
+    arr.push({ id, name: vendor+" R"+gen+"-"+(100+i), cpu, cores, gen, baseCost, power:+power.toFixed(2), security:+security.toFixed(1), ram:32+(i%8)*16 });
+    id++;
+  }
+  return arr;
+})();
+
+let crashFrequencyFactor = 1.0;
+let destructivePenaltyMitigation = 0; // reduces chain reaction chance
+
+function totalServerCount(){ return rooms.reduce((a,r)=> a + r.servers.length, 0); }
+function modelCost(m){ const mult = totalServerCount()<BEGINNER_THRESHOLD? BEGINNER_COST_MULT:1; return Math.floor(m.baseCost*mult); }
+
+function renderServerList(){
+  if(!serverListEl) return;
+  serverListEl.innerHTML='';
+  const r = room();
+  serverModels.forEach(m=>{
+    const cost=modelCost(m);
+    const div=document.createElement('div'); div.className='server-item';
+    div.innerHTML=`<h4>#${m.id} ${m.name}</h4>
+      <div class='spec'>CPU: ${m.cpu} / ${m.cores} cores • Gen ${m.gen} • ${m.ram}GB RAM</div>
+      <div class='spec'>Power: <span class='accent'>${m.power}</span> | Security: <span class='accent'>${m.security}</span></div>
+      <div class='spec'>Cost: $${cost}</div>`;
+    const btn=document.createElement('button'); btn.textContent='Buy'; btn.className='buy-btn'; btn.disabled = money<cost || r.servers.length>=MAX_SERVERS_PER_ROOM; btn.addEventListener('click',()=> purchaseModel(m));
+    div.appendChild(btn);
+    serverListEl.appendChild(div);
+  });
+}
+
+function purchaseModel(model){
+  const cost=modelCost(model); if(money<cost){ log('Need $'+cost); return; }
+  const r=room(); if(r.servers.length>=MAX_SERVERS_PER_ROOM){ log('Room full'); return; }
+  const slot=r.slots.find(s=>!s.server); if(!slot){ log('No slot'); return; }
+  money-=cost; updateMoney();
+  const bonusSec = totalServerCount()<BEGINNER_THRESHOLD? BEGINNER_SECURITY_BONUS:0;
+  const server={ id:nextServerId++, x:slot.x, y:slot.y, state:'alive', modelId:model.id, bonusSecurity:bonusSec, created:performance.now() };
+  slot.server=server; r.servers.push(server);
+  log('Purchased '+model.name+' (#'+server.id+')');
+  checkUnlockRoom(); refreshCounts(); draw(); renderServerList();
+}
+
+function openBuyPopup(){ if(!buyPopup) return; renderServerList(); buyPopup.style.display='flex'; }
+function closeBuy(){ buyPopup.style.display='none'; }
+if(closeBuyBtn) closeBuyBtn.addEventListener('click', closeBuy);
+if(buyBtn) buyBtn.addEventListener('click', openBuyPopup);
+
+function renderUpgrades(){
+  if(!upgradesListEl) return;
+  upgradesListEl.innerHTML='';
+  securityUpgrades.forEach(u=>{
+    const cost=upgradeCost(u);
+    const div=document.createElement('div'); div.className='upgrade-item';
+    div.innerHTML=`<div><h5>${u.name} (Lv ${u.level})</h5><div class='tiny'>${u.effect}</div><div class='tiny'>Cost: $${cost}</div></div>`;
+    const btn=document.createElement('button'); btn.textContent='Upgrade'; btn.disabled = money<cost; btn.addEventListener('click',()=>{ purchaseUpgrade(u); renderUpgrades(); });
+    div.appendChild(btn); upgradesListEl.appendChild(div);
+  });
+}
+function upgradeCost(u){ return Math.floor(u.baseCost*Math.pow(1.7,u.level)); }
+function purchaseUpgrade(u){ const cost=upgradeCost(u); if(money<cost) return; money-=cost; updateMoney(); u.level++; applyUpgradeEffects(u); log(u.name+' upgraded to Lv '+u.level); }
+function applyUpgradeEffects(u){ if(u.id==='firewall'){ globalSecurityLevel+=1; } else if(u.id==='siem'){ globalSecurityLevel+=2; } else if(u.id==='redundancy'){ crashFrequencyFactor=Math.max(0.5, crashFrequencyFactor-0.1); } else if(u.id==='patcher'){ globalSecurityLevel+=1; destructivePenaltyMitigation+=0.15; } }
+function openUpgradesPopup(){ renderUpgrades(); upgradePopup.style.display='flex'; }
+function closeUpgrades(){ upgradePopup.style.display='none'; }
+if(closeUpgradesBtn) closeUpgradesBtn.addEventListener('click', closeUpgrades);
+if(closeSpecBtn) closeSpecBtn.addEventListener('click', ()=> specPopup.style.display='none');
+
+function randomCrashDelay(){
+  // rare: between 35s and 70s
+  return 35 + Math.random()*35;
+}
+
+function randomHackDelay(){
+  // hacking rarer but impactful (60s - 110s)
+  return 60 + Math.random()*50;
+}
+
+function log(msg){
+  const line = document.createElement('div');
+  line.textContent = '['+new Date().toLocaleTimeString()+'] '+msg;
+  logEl.appendChild(line);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function updateMoney(){ moneyEl.textContent = Math.floor(money); }
+function aliveServers(){ return rooms.reduce((acc,r)=> acc + r.servers.filter(s=> s.state==='alive').length, 0); }
+function computeIncome(){
+  const aliveList = rooms.flatMap(r=> r.servers.filter(s=> s.state==='alive'));
+  if(!aliveList.length) return {rate:0,mult:1};
+  const mult = 1 + (aliveList.length-1)*0.05;
+  const power = aliveList.reduce((a,s)=>{ const m=serverModels[s.modelId-1]; return a + (m? m.power:1); },0);
+  return {rate: power * 1.2 * mult, mult};
+}
+function updateIncomeUI(){ const {rate,mult}=computeIncome(); incomeRateEl.textContent=rate.toFixed(1); incomeMultEl.textContent='x'+mult.toFixed(2); }
+
+function resizeCanvas(){ /* already fixed size, keep for future */ }
+window.addEventListener('resize', resizeCanvas);
+
+function room(){ return rooms[currentRoomIndex]; }
+
+function createRoom(id){
+  const slots = generateSlots();
+  return { id, slots, servers:[] };
+}
+
+function generateSlots(){
+  const cols=5, rows=4; // 20 slots
+  const marginX=90, marginY=70;
+  const innerW = canvas.width - marginX*2;
+  const innerH = canvas.height - marginY*2;
+  const dx = cols>1? innerW/(cols-1):0;
+  const dy = rows>1? innerH/(rows-1):0;
+  const slots=[];
+  for(let r=0;r<rows;r++){
+    for(let c=0;c<cols;c++){
+      slots.push({ x: marginX + dx*c, y: marginY + dy*r, server:null });
+    }
+  }
+  return slots;
+}
+
+function tryAddServer(){
+  log('Open the Buy menu to select a server model.');
+}
+
+function checkUnlockRoom(){
+  // unlock new room when current room hits capacity and no next room
+  const r = room();
+  if(r.servers.length === MAX_SERVERS_PER_ROOM && currentRoomIndex === rooms.length-1){
+    rooms.push(createRoom(rooms.length+1));
+    nextRoomBtn.disabled = false;
+    log('New room unlocked: Room '+ rooms[rooms.length-1].id);
+  }
+}
+
+function refreshCounts(){
+  roomCountEl.textContent = room().servers.length;
+  totalServersEl.textContent = rooms.reduce((a,r)=> a + r.servers.length, 0);
+  prevRoomBtn.disabled = currentRoomIndex === 0;
+  nextRoomBtn.disabled = currentRoomIndex >= rooms.length-1;
+  roomLabel.textContent = 'Room '+ room().id;
+  buyHint.style.display = room().servers.length ? 'none':'block';
+  updateIncomeUI();
+}
+
+function draw(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  // rack backgrounds (columns)
+  const cols=5; const rackWidth = 110+24; // server width plus margin
+  for(let c=0;c<cols;c++){
+    const alpha = 0.05 + (c%2)*0.02;
+    ctx.fillStyle='rgba(255,255,255,'+alpha+')';
+    // determine column x span via slots
+  }
+  // subtle grid under
+  ctx.strokeStyle='rgba(255,255,255,0.04)'; ctx.lineWidth=1;
+  for(let x=0; x<canvas.width; x+=40){ ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,canvas.height); ctx.stroke(); }
+  for(let y=0; y<canvas.height; y+=40){ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(canvas.width,y); ctx.stroke(); }
+
+  const r = room();
+  // draw empty slot outlines
+  r.slots.forEach(sl=>{ if(!sl.server){ ctx.beginPath(); ctx.strokeStyle='rgba(255,255,255,0.08)'; ctx.setLineDash([4,4]); ctx.lineWidth=1; const w=110,h=60; ctx.strokeRect(sl.x - w/2, sl.y - h/2, w, h); ctx.setLineDash([]);} });
+  for(const s of r.servers){
+    const w=110, h=60;
+    const alive = s.state==='alive';
+    const x = s.x - w/2, y=s.y - h/2;
+    ctx.beginPath();
+    const grad = ctx.createLinearGradient(x,y,x,y+h);
+    if(alive){ grad.addColorStop(0,'#0e2a52'); grad.addColorStop(1,'#143a6d'); }
+    else{ grad.addColorStop(0,'#531515'); grad.addColorStop(1,'#2c0909'); }
+    ctx.fillStyle=grad; ctx.strokeStyle = alive? 'rgba(96,165,250,0.25)':'rgba(255,120,120,0.4)';
+    roundRect(ctx,x,y,w,h,10,true,true);
+  const model = s.modelId? serverModels[s.modelId-1]:null;
+  const name = model? model.name: ('Node '+s.id);
+  const label = name.length>14? name.slice(0,13)+'…':name;
+  ctx.fillStyle= alive? '#60a5fa':'#ff7b7b';
+  ctx.font='11px Inter';
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText(label, s.x, s.y-4);
+  if(!alive){ ctx.fillStyle='#ffb4b4'; ctx.font='10px Inter'; ctx.fillText('CRASHED', s.x, s.y+14); }
+    if(crashedServers.has(s.id)){
+      ctx.strokeStyle='#facc15'; ctx.lineWidth=2; ctx.strokeRect(x-4,y-4,w+8,h+8);
+    }
+  }
+}
+
+function roundRect(ctx,x,y,w,h,r,fill,stroke){
+  if(typeof r === 'number'){ r={tl:r,tr:r,br:r,bl:r}; }
+  ctx.beginPath(); ctx.moveTo(x+r.tl,y); ctx.lineTo(x+w-r.tr,y); ctx.quadraticCurveTo(x+w,y,x+w,y+r.tr); ctx.lineTo(x+w,y+h-r.br); ctx.quadraticCurveTo(x+w,y+h,x+w-r.br,y+h); ctx.lineTo(x+r.bl,y+h); ctx.quadraticCurveTo(x,y+h,x,y+h-r.bl); ctx.lineTo(x,y+r.tl); ctx.quadraticCurveTo(x,y,x+r.tl,y); if(fill) ctx.fill(); if(stroke) ctx.stroke(); }
+
+canvas.addEventListener('click', e=>{
+  const rect = canvas.getBoundingClientRect();
+  const x = e.clientX - rect.left; const y = e.clientY - rect.top;
+  if(pendingMinigame) return;
+  // detect clicked server
+  const r = room();
+  for(const s of r.servers){ const w=110,h=60; if(x>=s.x-w/2 && x<=s.x+w/2 && y>=s.y-h/2 && y<=s.y+h/2){ if(s.state==='dead'){ openCrashMinigame(s, rooms.indexOf(r)); } return; } }
+  for(const s of r.servers){ const w=110,h=60; if(x>=s.x-w/2 && x<=s.x+w/2 && y>=s.y-h/2 && y<=s.y+h/2){ if(s.state==='alive'){ openSpecPopup(s); } return; } }
+});
+
+buyBtn.addEventListener('click', ()=>{ tryAddServer(); });
+prevRoomBtn.addEventListener('click', ()=>{ if(currentRoomIndex>0){ currentRoomIndex--; refreshCounts(); draw(); } });
+nextRoomBtn.addEventListener('click', ()=>{ if(currentRoomIndex<rooms.length-1){ currentRoomIndex++; refreshCounts(); draw(); } });
+
+// Crash system
+function scheduleCrashCheck(dt){
+  crashTimer += dt;
+  if(crashTimer >= nextCrashIn){
+    crashTimer = 0; nextCrashIn = randomCrashDelay() * crashFrequencyFactor;
+    const all = rooms.flatMap((r,i)=> r.servers.map(s=>({s,roomIndex:i})) ).filter(o=>o.s.state==='alive');
+    if(all.length){
+      const pick = all[Math.floor(Math.random()*all.length)];
+      if(!rollSecurityAvoid(pick.s,'crash')){
+        pick.s.state='dead'; crashedServers.add(pick.s.id); log('Server #'+pick.s.id+' crashed in Room '+ rooms[pick.roomIndex].id + ' (click to repair)');
+      } else { log('Crash avoided (#'+pick.s.id+')'); }
+    }
+  }
+}
+
+function openCrashMinigame(server, roomIndex){
+  activeCrash = { server, roomIndex };
+  crashServerLabel.textContent = 'Server #'+server.id+' in Room '+ rooms[roomIndex].id + ' (REPAIR)';
+  crashPopup.style.display='flex';
+  buildMinigame(server);
+}
+
+closeCrashBtn.addEventListener('click', ()=>{ crashPopup.style.display='none'; });
+
+goToServerBtn.addEventListener('click', ()=>{
+  if(!activeCrash) return;
+  currentRoomIndex = activeCrash.roomIndex;
+  refreshCounts();
+  draw();
+});
+
+// Minigame: quick typing / sequence memory hybrid
+let pendingMinigame = false;
+function buildMinigame(server, forcedMode=null, highStakes=false){
+  taskArea.innerHTML=''; pendingMinigame=true;
+  const modeRand = Math.random();
+  const mode = forcedMode || (modeRand<0.25? 'sequence': (modeRand<0.5? 'accuracy': (modeRand<0.75? 'typing':'code')));
+  if(highStakes){
+    const warn=document.createElement('div'); warn.className='danger'; warn.style.fontSize='13px'; warn.textContent='HIGH-STAKES: Failure destroys this server!'; taskArea.appendChild(warn);
+  }
+  if(mode==='sequence'){
+    const seqLen = 5 + Math.floor(Math.random()*3);
+    const letters = 'QWERTASDFGZXCV';
+    const seq = Array.from({length:seqLen},()=> letters[Math.floor(Math.random()*letters.length)]);
+    const display=document.createElement('div'); display.style.fontSize='20px'; display.style.fontWeight='800'; display.textContent=seq.join(' '); taskArea.appendChild(display);
+    const countdown=document.createElement('div'); countdown.style.fontSize='11px'; countdown.style.color='var(--muted)'; taskArea.appendChild(countdown);
+    const input=document.createElement('input'); input.placeholder='Type & Enter'; input.style.cssText='padding:6px 8px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:#0f2744;color:var(--accent)'; taskArea.appendChild(input);
+    const status=document.createElement('div'); status.style.fontSize='12px'; status.style.color='var(--muted)'; status.textContent='Accuracy matters'; taskArea.appendChild(status);
+    let timeLeft=10; countdown.textContent='Time: '+timeLeft.toFixed(1)+'s';
+    const timer=setInterval(()=>{ timeLeft-=0.1; countdown.textContent='Time: '+timeLeft.toFixed(1)+'s'; if(timeLeft<=0){ clearInterval(timer); status.textContent='Time up!'; failAttempt(server); } },100);
+    input.addEventListener('keydown',ev=>{ if(ev.key==='Enter'){ clearInterval(timer); const attempt=input.value.toUpperCase().replace(/\s+/g,''); const target=seq.join(''); let correct=0; for(let i=0;i<Math.min(attempt.length,target.length);i++){ if(attempt[i]===target[i]) correct++; }
+      const accuracy = (correct/target.length)*100; status.textContent='Accuracy '+accuracy.toFixed(1)+'%'; if(attempt===target){ finishCrash(server); } else if(accuracy>=70){ finishCrash(server); log('Server #'+server.id+' restored (partial accuracy '+accuracy.toFixed(1)+'%)'); } else { failAttempt(server, highStakes); }
+    }});
+    input.focus();
+  } else if(mode==='accuracy') {
+    const info=document.createElement('div'); info.style.fontSize='12px'; info.style.color='var(--muted)'; info.textContent='Hit SPACE when marker enters the green zone (3 successes)'; taskArea.appendChild(info);
+    const barWrap=document.createElement('div'); barWrap.style.cssText='height:26px; background:#0f2744; border:1px solid rgba(255,255,255,0.15); border-radius:8px; position:relative; overflow:hidden;'; taskArea.appendChild(barWrap);
+    const targetZone=document.createElement('div'); const zoneWidth=70; targetZone.style.cssText='position:absolute; top:0; height:100%; width:'+zoneWidth+'px; left:'+(20+Math.random()*(barWrap.clientWidth-zoneWidth-40))+'px; background:rgba(52,211,153,0.25); border:1px solid rgba(52,211,153,0.6);'; barWrap.appendChild(targetZone);
+    const marker=document.createElement('div'); marker.style.cssText='position:absolute; top:0; left:0; height:100%; width:14px; background:linear-gradient(180deg,#60a5fa,#2563eb); box-shadow:0 0 6px #60a5fa'; barWrap.appendChild(marker);
+    let speed=220; let dir=1; let x=0; let successes=0; let attempts=0; let timeLeft=15; const timerLbl=document.createElement('div'); timerLbl.style.fontSize='11px'; timerLbl.style.color='var(--muted)'; timerLbl.textContent='Time: '+timeLeft.toFixed(1)+'s'; taskArea.appendChild(timerLbl);
+    const succLbl=document.createElement('div'); succLbl.style.fontSize='11px'; succLbl.style.color='var(--muted)'; succLbl.textContent='Successes: 0/3'; taskArea.appendChild(succLbl);
+    let lastTs=null; function anim(ts){ if(!pendingMinigame) return; if(!lastTs) lastTs=ts; const dt=(ts-lastTs)/1000; lastTs=ts; x+=dir*speed*dt; if(x<0){ x=0; dir=1; } const max=barWrap.clientWidth-14; if(x>max){ x=max; dir=-1; }
+      marker.style.left=x+'px'; requestAnimationFrame(anim); }
+    requestAnimationFrame(anim);
+    const countdown=setInterval(()=>{ timeLeft-=0.1; if(timeLeft<=0){ clearInterval(countdown); failAttempt(server); } timerLbl.textContent='Time: '+Math.max(0,timeLeft).toFixed(1)+'s'; },100);
+  function key(e){ if(e.code==='Space'){ e.preventDefault(); attempts++; const zoneLeft=targetZone.offsetLeft; const zoneRight=zoneLeft+targetZone.offsetWidth; const markerCenter=x+7; if(markerCenter>=zoneLeft && markerCenter<=zoneRight){ successes++; succLbl.textContent='Successes: '+successes+'/3'; log('Accuracy hit ('+successes+'/3)'); if(successes>=3){ clearInterval(countdown); document.removeEventListener('keydown',key); finishCrash(server); } } else { succLbl.textContent='Miss! Successes: '+successes+'/3'; } } }
+    document.addEventListener('keydown',key);
+  } else { // typing mash upgraded with accuracy scoring
+    const target= 40 + Math.floor(Math.random()*40); // progress target
+    const barWrap=document.createElement('div'); barWrap.style.height='18px'; barWrap.style.background='#0f2744'; barWrap.style.border='1px solid rgba(255,255,255,0.15)'; barWrap.style.borderRadius='6px'; barWrap.style.position='relative'; taskArea.appendChild(barWrap);
+    const bar=document.createElement('div'); bar.style.height='100%'; bar.style.width='0%'; bar.style.background='linear-gradient(90deg,#2563eb,#1e40af)'; bar.style.borderRadius='6px'; barWrap.appendChild(bar);
+    const info=document.createElement('div'); info.style.fontSize='12px'; info.style.color='var(--muted)'; info.textContent='Press SPACE quickly — Progress 0/'+target; taskArea.appendChild(info);
+    let prog=0; let timeLeft=8; const timer=document.createElement('div'); timer.style.fontSize='11px'; timer.style.color='var(--muted)'; timer.textContent='Time: '+timeLeft.toFixed(1)+'s'; taskArea.appendChild(timer);
+    const tInt=setInterval(()=>{ timeLeft-=0.1; timer.textContent='Time: '+Math.max(0,timeLeft).toFixed(1)+'s'; if(timeLeft<=0){ clearInterval(tInt); document.removeEventListener('keydown',key); if(prog>=target*0.7){ finishCrash(server); log('Server #'+server.id+' restored (partial speed)'); } else { failAttempt(server, highStakes); } } },100);
+    function key(e){ if(e.code==='Space'){ e.preventDefault(); prog++; bar.style.width=(prog/target*100)+'%'; info.textContent='Press SPACE quickly — Progress '+prog+'/'+target; if(prog>=target){ clearInterval(tInt); document.removeEventListener('keydown',key); finishCrash(server); } }}
+    document.addEventListener('keydown',key);
+  }
+
+  if(mode==='code'){
+    taskArea.innerHTML='';
+    const header=document.createElement('div'); header.style.fontSize='12px'; header.style.color='var(--muted)'; header.textContent='Rapid patch upload: Type the code exactly before countdown ends'; taskArea.appendChild(header);
+    const codeStr = genCodeString();
+    const codeDisp=document.createElement('div'); codeDisp.style.cssText='font-family:monospace; background:#0f2744; padding:8px 10px; border:1px solid rgba(255,255,255,0.15); border-radius:8px; font-size:13px; letter-spacing:1px;'; codeDisp.textContent=codeStr; taskArea.appendChild(codeDisp);
+    const input=document.createElement('input'); input.placeholder='Type code & Enter'; input.style.cssText='padding:6px 8px;margin-top:6px;width:100%;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:#102a49;color:var(--accent);font-family:monospace;'; taskArea.appendChild(input);
+    const status=document.createElement('div'); status.style.fontSize='12px'; status.style.marginTop='4px'; status.style.color='var(--muted)'; taskArea.appendChild(status);
+    let timeLeft = highStakes? 8: 12; const timerEl=document.createElement('div'); timerEl.style.fontSize='11px'; timerEl.style.color='var(--muted)'; timerEl.textContent='Time: '+timeLeft.toFixed(1)+'s'; taskArea.appendChild(timerEl);
+    const tInt=setInterval(()=>{ timeLeft-=0.1; timerEl.textContent='Time: '+Math.max(0,timeLeft).toFixed(1)+'s'; if(timeLeft<=0){ clearInterval(tInt); if(input.value===codeStr){ finishCrash(server); } else { failAttempt(server, highStakes); } } },100);
+    input.addEventListener('keydown',ev=>{ if(ev.key==='Enter'){ clearInterval(tInt); const attempt=input.value; if(attempt===codeStr){ finishCrash(server); } else { let correct=0; for(let i=0;i<Math.min(attempt.length,codeStr.length);i++){ if(attempt[i]===codeStr[i]) correct++; } const accuracy=(correct/codeStr.length)*100; if(accuracy>=75){ finishCrash(server); log('Server #'+server.id+' restored (code accuracy '+accuracy.toFixed(1)+'%)'); } else { failAttempt(server, highStakes); } } }});
+    input.focus();
+  }
+}
+
+function genCodeString(){
+  const chars='ABCDEFGHJKLMNPQRSTUVWXYZ23456789<>:{}[]#@';
+  let len = 8 + Math.floor(Math.random()*4);
+  let out='';
+  for(let i=0;i<len;i++) out+=chars[Math.floor(Math.random()*chars.length)];
+  return out;
+}
+
+function failAttempt(server, highStakes=false){ pendingMinigame=false; crashPopup.style.display='none'; if(highStakes){ blowUpServer(server); } else { log('Repair attempt failed for server #'+server.id+' (try again)'); } draw(); }
+
+function blowUpServer(server){
+  log('SERVER #'+server.id+' DESTROYED!');
+  for(const r of rooms){ const idx = r.servers.indexOf(server); if(idx>-1){ r.servers.splice(idx,1); const slot = r.slots.find(s=> s.server && s.server.id===server.id); if(slot) slot.server=null; break; } }
+  crashedServers.delete(server.id);
+  let chainChance = 0.25 - (destructivePenaltyMitigation||0); if(chainChance<0.05) chainChance=0.05;
+  if(Math.random()<chainChance){ wipeRoomOfServer(server); }
+  refreshCounts();
+}
+
+function wipeRoomOfServer(server){
+  let targetRoom=null; for(const r of rooms){ if(r.servers.find(s=> s.id===server.id)){ targetRoom=r; break; } }
+  if(!targetRoom) return;
+  log('Chain reaction! Entire Room '+targetRoom.id+' compromised.');
+  const destroyed = [...targetRoom.servers];
+  destroyed.forEach(s=> { const slot=targetRoom.slots.find(sl=> sl.server && sl.server.id===s.id); if(slot) slot.server=null; });
+  targetRoom.servers.length=0;
+  // prompt high stakes restore
+  activeHighStakes = { roomIndex: rooms.indexOf(targetRoom), serverIds: destroyed.map(s=>s.id) };
+  setTimeout(()=>{ openRoomRestoreMinigame(); }, 600);
+}
+
+function openRoomRestoreMinigame(){
+  if(!activeHighStakes) return;
+  crashPopup.style.display='flex';
+  taskArea.innerHTML=''; pendingMinigame=true;
+  const title=document.createElement('div'); title.className='danger'; title.textContent='ROOM COMPROMISED!'; title.style.fontSize='16px'; taskArea.appendChild(title);
+  const info=document.createElement('div'); info.style.fontSize='12px'; info.style.color='var(--muted)'; info.innerHTML='Restore all destroyed servers with a perfect CODE entry.<br><span class="danger">Failure erases the room permanently!</span>'; taskArea.appendChild(info);
+  const code=genCodeString()+genCodeString();
+  const disp=document.createElement('div'); disp.style.cssText='font-family:monospace; background:#0f2744; padding:8px 10px; border:1px solid rgba(255,255,255,0.15); border-radius:8px; font-size:13px; margin-top:6px;'; disp.textContent=code; taskArea.appendChild(disp);
+  const input=document.createElement('input'); input.placeholder='Exact code & Enter'; input.style.cssText='padding:6px 8px; width:100%; margin-top:6px; border-radius:8px; background:#102a49; border:1px solid rgba(255,255,255,0.15); color:var(--accent); font-family:monospace;'; taskArea.appendChild(input);
+  const timerEl=document.createElement('div'); timerEl.style.fontSize='11px'; timerEl.style.color='var(--muted)'; taskArea.appendChild(timerEl);
+  let timeLeft=14; const tInt=setInterval(()=>{ timeLeft-=0.1; timerEl.textContent='Time: '+Math.max(0,timeLeft).toFixed(1)+'s'; if(timeLeft<=0){ clearInterval(tInt); finalizeRoomRestore(false, code, input.value); } },100);
+  input.addEventListener('keydown',ev=>{ if(ev.key==='Enter'){ clearInterval(tInt); finalizeRoomRestore(input.value===code, code, input.value); }});
+  input.focus();
+}
+
+function finalizeRoomRestore(success, code, attempt){
+  pendingMinigame=false; crashPopup.style.display='none';
+  if(!activeHighStakes) return;
+  const { roomIndex } = activeHighStakes;
+  if(success){
+    log('Room '+ rooms[roomIndex].id +' fully restored.');
+    // give back baseline servers (half of destroyed to balance)
+    const restoreCount = Math.min(Math.ceil(MAX_SERVERS_PER_ROOM/3), MAX_SERVERS_PER_ROOM - rooms[roomIndex].servers.length);
+    for(let i=0;i<restoreCount;i++){ autoAddServerToRoom(rooms[roomIndex]); }
+  } else {
+    log('Room '+ rooms[roomIndex].id +' lost permanently.');
+    // remove room and shift indices
+    rooms.splice(roomIndex,1);
+    if(currentRoomIndex>=rooms.length) currentRoomIndex = Math.max(0, rooms.length-1);
+  }
+  activeHighStakes=null; refreshCounts(); draw();
+}
+
+function autoAddServerToRoom(r){
+  const slot = r.slots.find(s=> !s.server);
+  if(!slot) return;
+  const server = { id: nextServerId++, x: slot.x, y: slot.y, state:'alive', crashProgress:0, modelId:1, bonusSecurity:0, created:performance.now() };
+  slot.server=server; r.servers.push(server);
+}
+
+// Hack events
+function scheduleHackCheck(dt){
+  hackTimer += dt;
+  if(hackTimer >= nextHackIn){
+    hackTimer=0; nextHackIn = randomHackDelay();
+    const candidates = rooms.flatMap((r,i)=> r.servers.map(s=>({s,roomIndex:i})) ).filter(o=>o.s.state==='alive');
+    if(!candidates.length) return;
+    const pick = candidates[Math.floor(Math.random()*candidates.length)];
+    if(!rollSecurityAvoid(pick.s,'hack')){
+      pick.s.state='dead'; crashedServers.add(pick.s.id); log('HACK detected on Server #'+pick.s.id+' (high-stakes)'); activeCrash={ server: pick.s, roomIndex: pick.roomIndex }; crashServerLabel.textContent='Server #'+pick.s.id+' HACKED!'; crashPopup.style.display='flex'; buildMinigame(pick.s,'code',true);
+    } else { log('Hack attempt blocked (#'+pick.s.id+')'); }
+  }
+}
+// replaced failAttempt earlier
+function rollSecurityAvoid(server, type){
+  if(!server.modelId) return false;
+  const m = serverModels[server.modelId-1];
+  const baseSec = (m? m.security:1) + (server.bonusSecurity||0) + globalSecurityLevel;
+  const base = type==='hack'? 0.02:0.01;
+  let chance = base + baseSec*0.01;
+  if(type==='crash'){ const redund=securityUpgrades.find(u=>u.id==='redundancy'); if(redund&&redund.level) chance += redund.level*0.01; }
+  if(chance>0.5) chance=0.5;
+  return Math.random()<chance;
+}
+
+function finishCrash(server){
+  server.state='alive'; crashedServers.delete(server.id); pendingMinigame=false; activeCrash=null; log('Server #'+server.id+' restored.'); crashPopup.style.display='none'; refreshCounts(); draw(); }
+
+function openSpecPopup(server){
+  if(!specPopup) return;
+  const model = server.modelId? serverModels[server.modelId-1]:null;
+  const aliveList = rooms.flatMap(r=> r.servers.filter(s=> s.state==='alive'));
+  const synergyMult = 1 + (aliveList.length-1)*0.05;
+  let html='';
+  if(model){
+    const effectiveSec = (model.security||1) + (server.bonusSecurity||0) + globalSecurityLevel;
+    const contribution = (model.power * 1.2 * synergyMult).toFixed(2);
+    const ageSec = ((performance.now() - (server.created||performance.now()))/1000).toFixed(1);
+    html += `<div style="font-size:14px; font-weight:700; color:var(--accent); margin-bottom:6px">${model.name}</div>`;
+    html += `<div><span class='accent'>CPU</span>: ${model.cpu} • ${model.cores} cores (Gen ${model.gen})</div>`;
+    html += `<div>Memory: ${model.ram} GB</div>`;
+    html += `<div>Base Power: ${model.power}</div>`;
+    html += `<div>Effective Security: ${effectiveSec.toFixed(1)} (Model ${model.security}${server.bonusSecurity? ' + Bonus '+server.bonusSecurity:''}${globalSecurityLevel? ' + Global '+globalSecurityLevel:''})</div>`;
+    html += `<div>Estimated Income Contribution: $${contribution}/s</div>`;
+    html += `<div>Uptime: ${ageSec}s</div>`;
+  } else {
+    html += '<div style="font-size:14px; font-weight:700; color:var(--accent); margin-bottom:6px">Generic Restored Node</div>';
+  }
+  html += `<div style='margin-top:8px; font-size:11px; color:var(--muted)'>Synergy Multiplier: x${synergyMult.toFixed(2)}</div>`;
+  specContent.innerHTML = html;
+  specPopup.style.display='flex';
+}
+
+function loop(ts){
+  if(!running){ return; }
+  if(!loop.lastTs) loop.lastTs=ts;
+  const dt=(ts-loop.lastTs)/1000; loop.lastTs=ts;
+  scheduleCrashCheck(dt);
+  scheduleHackCheck(dt);
+  // passive income
+  const inc = computeIncome();
+  if(inc.rate>0){ money += inc.rate * dt; incomeAccum += dt; if(incomeAccum>=0.25){ incomeAccum=0; updateMoney(); updateIncomeUI(); } }
+  draw();
+  requestAnimationFrame(loop);
+}
+
+refreshCounts(); updateMoney(); updateIncomeUI(); draw(); requestAnimationFrame(loop);
+</script>
+</body>
+</html>
