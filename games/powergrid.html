@@ -1,0 +1,500 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Power Grid Operator — Games</title>
+  <link rel="stylesheet" href="../css/styles.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    body.game-page{ align-items:center }
+    .wrap{ width:1100px; max-width:calc(100% - 40px); margin-top:24px; display:flex; gap:18px }
+    .left{ flex:1; position:relative; padding:18px; background:var(--panel); border-radius:12px }
+    .right{ width:360px; background:var(--panel); padding:16px; border-radius:12px }
+    #gridVis{ width:100%; height:520px; background:#050607; border-radius:10px; display:block }
+    .stat{ display:flex; justify-content:space-between; align-items:center; margin:6px 0 }
+    .meter{ height:14px; background:#081a2b; border-radius:8px; overflow:hidden }
+    .meter > i{ display:block; height:100%; background:linear-gradient(90deg,#16a085,#4ea3ff) }
+    .controls{ display:flex; flex-direction:column; gap:8px }
+    .gen-row{ display:flex; gap:8px; align-items:center; justify-content:space-between }
+    .log{ background:#070a0d; height:140px; overflow:auto; padding:8px; border-radius:8px; border:1px solid rgba(255,255,255,0.03); font-size:13px }
+    .btn-row{ display:flex; gap:8px; justify-content:space-between }
+  </style>
+</head>
+<body class="game-page">
+  <a class="home" href="../index.html">Home</a>
+  <div class="wrap">
+    <div class="left">
+      <h2 style="margin-top:0; color:var(--accent)">Power Grid Operator</h2>
+      <div style="color:var(--muted); margin-bottom:8px">Keep supply matched to demand while avoiding overloads and cascading failures.</div>
+      <canvas id="gridVis"></canvas>
+      <div style="display:flex; gap:12px; margin-top:12px">
+        <div style="flex:1"><div class="stat"><div>Demand</div><div id="demandVal">0 MW</div></div><div class="meter"><i id="demandBar" style="width:0%"></i></div></div>
+        <div style="flex:1"><div class="stat"><div>Supply</div><div id="supplyVal">0 MW</div></div><div class="meter"><i id="supplyBar" style="width:0%"></i></div></div>
+      </div>
+    </div>
+    <div class="right">
+      <h3 style="margin:0 0 6px 0">Control Panel</h3>
+      <div style="color:var(--muted); font-size:13px; margin-bottom:8px">Manage generators and network. Avoid blackouts to keep your stability score high.</div>
+      <div class="controls" id="controls"></div>
+      <div style="margin-top:8px" class="stat"><div>Stability</div><div id="stability">100</div></div>
+      <div class="stat"><div>Money</div><div id="money">$500</div></div>
+      <div class="btn-row" style="margin-top:8px">
+        <button id="addGen" type="button">Buy Generator</button>
+        <button id="repairAll" type="button">Repair Lines</button>
+      </div>
+      <div id="pgMsg" style="margin-top:8px; min-height:20px; color:var(--muted); font-size:13px"></div>
+      <div style="margin-top:10px" class="stat"><div>Events</div><div></div></div>
+      <div class="log" id="log"></div>
+      <div style="margin-top:10px; font-size:12px; color:var(--muted)">Tip: use sliders to adjust generator outputs. Lines have capacities; pushing them can cause failures.</div>
+    </div>
+  </div>
+
+  <script>
+  // Leaflet is required for map previews; load script if not present (CDN)
+  // Note: the page includes leaflet css in the head; we dynamically load the script so the page can still work offline gracefully.
+  (function(){ if(typeof L === 'undefined'){ const s = document.createElement('script'); s.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'; s.onload = ()=> console.log('Leaflet loaded'); document.head.appendChild(s); }})();
+  // Grid Operator prototype - thoughtful simulation but compact for prototyping
+  const canvas = document.getElementById('gridVis'); const ctx = canvas.getContext('2d');
+  function fit(){ const rect = canvas.getBoundingClientRect(); const dpr=window.devicePixelRatio||1; canvas.width = rect.width * dpr; canvas.height = rect.height * dpr; canvas.style.width = rect.width+'px'; canvas.style.height = rect.height+'px'; ctx.setTransform(dpr,0,0,dpr,0,0); }
+  window.addEventListener('resize', ()=>{ fit(); draw(); }); fit();
+
+  // Simulation state
+  let money = 500; let stability = 100; let score = 0; let time = 0;
+  const demandEl = document.getElementById('demandVal'); const supplyEl = document.getElementById('supplyVal');
+  const demandBar = document.getElementById('demandBar'); const supplyBar = document.getElementById('supplyBar');
+  const stabilityEl = document.getElementById('stability'); const moneyEl = document.getElementById('money'); const logEl = document.getElementById('log');
+
+  // Generators & network
+  const gens = [];
+  const nodes = [ {id:0,x:120,y:90,load:30,priority:2}, {id:1,x:360,y:70,load:40,priority:2}, {id:2,x:600,y:110,load:25,priority:1}, {id:3,x:840,y:90,load:50,priority:3} ];
+  // each node keeps a dynamic currentLoad and recovery timer to avoid repeated shedding spam
+  nodes.forEach(n=>{ n.currentLoad = n.load; n.recoverTimer = 0; n.shedCount = 0; });
+  const lines = []; // {a,b,capacity,ok}
+  function createDefaultNetwork(){ lines.length=0; lines.push({a:0,b:1,capacity:120,ok:true}); lines.push({a:1,b:2,capacity:110,ok:true}); lines.push({a:2,b:3,capacity:130,ok:true}); lines.push({a:0,b:2,capacity:90,ok:true}); }
+  createDefaultNetwork();
+
+  // controls element must be cached before renderControls / addGenerator calls
+  const controls = document.getElementById('controls');
+
+  function log(msg){ const el = document.createElement('div'); el.textContent = '['+new Date().toLocaleTimeString()+'] '+msg; logEl.appendChild(el); logEl.scrollTop = logEl.scrollHeight; }
+
+  // helper to add generators (call when purchased)
+  // failRate: per-second failure probability (small). reliability kept for reference.
+  function addGenerator(opts){ const id = gens.length+1; const g = { id, name:opts.name||('Gen '+id), max:opts.max||100, output:Math.min(opts.max, opts.start||Math.floor(opts.max*0.6)), cost:opts.cost||200, reliability:opts.reliability||0.995, failRate: opts.failRate || 0.0002, status:'on' }; gens.push(g); renderControls(); }
+
+  // available generators in the shop - player must buy everything
+  const availableGenerators = [
+    { key:'gas', name:'Gas Turbine', max:150, cost:300, failRate:0.00015 },
+    { key:'hydro', name:'Hydro Unit', max:120, cost:260, failRate:0.00012 },
+    { key:'diesel', name:'Diesel Gen', max:90, cost:200, failRate:0.0002 }
+  ];
+
+  // render shop area above controls
+  function renderShop(){ const shopAreaId = 'shopArea'; let shopArea = document.getElementById(shopAreaId); if(!shopArea){ shopArea = document.createElement('div'); shopArea.id = shopAreaId; shopArea.style.display='flex'; shopArea.style.flexDirection='column'; shopArea.style.gap='8px'; shopArea.style.marginBottom='10px'; const rightCol = document.querySelector('.right'); if(rightCol) rightCol.insertBefore(shopArea, rightCol.querySelector('#controls')); }
+    shopArea.innerHTML = '';
+    availableGenerators.forEach(it=>{
+      const row = document.createElement('div'); row.style.display='flex'; row.style.justifyContent='space-between'; row.style.alignItems='center';
+      const left = document.createElement('div'); left.innerHTML = '<div style="font-weight:800">'+it.name+'</div><div style="font-size:12px;color:var(--muted)">Max '+it.max+' MW</div>';
+      const buy = document.createElement('button'); buy.textContent = 'Buy $'+it.cost; buy.style.background='var(--btn-bg)'; buy.style.color='var(--accent)'; buy.addEventListener('click', ()=> purchaseGenerator(it));
+      row.appendChild(left); row.appendChild(buy); shopArea.appendChild(row);
+    }); }
+
+  function purchaseGenerator(item){ const cost = item.cost; const msg = document.getElementById('pgMsg'); if(money < cost){ msg.textContent = 'Need $'+cost+' to buy '+item.name; log('Not enough money for '+item.name); setTimeout(()=>msg.textContent='',1600); return; } money -= cost; addGenerator({ name: item.name, max: item.max, cost: item.cost, failRate: item.failRate }); updateUI(); log('Purchased '+item.name+' for $'+cost); msg.textContent = 'Purchased '+item.name; setTimeout(()=>msg.textContent='',1600); }
+
+  // render shop initially
+  setTimeout(()=> renderShop(), 30);
+
+  // UI: controls render
+  function renderControls(){ controls.innerHTML=''; gens.forEach(g=>{
+    const row = document.createElement('div'); row.className='gen-row';
+    const left = document.createElement('div'); left.style.flex='1';
+    left.innerHTML = '<div style="font-weight:800">'+g.name+'</div><div style="font-size:12px;color:var(--muted)">Max '+g.max+' MW</div>';
+    const right = document.createElement('div'); right.style.width='180px';
+    const slider = document.createElement('input'); slider.type='range'; slider.min=0; slider.max=g.max; slider.value=g.output; slider.style.width='100%';
+    slider.addEventListener('input', ()=>{ g.output = Number(slider.value); updateUI(); });
+    const small = document.createElement('div'); small.style.fontSize='12px'; small.style.color='var(--muted)'; small.textContent = 'Output: '+g.output+' MW';
+    slider.addEventListener('input', ()=> small.textContent = 'Output: '+slider.value+' MW');
+    // status and repair button
+    const status = document.createElement('div'); status.style.fontSize='12px'; status.style.marginTop='6px'; status.style.color = g.status==='on'? 'var(--muted)': '#f87171'; status.textContent = g.status==='on'? 'Online':'Fault';
+    const repairBtn = document.createElement('button'); repairBtn.textContent = g.status==='on'? 'Toggle Off':'Repair'; repairBtn.style.marginTop='6px'; repairBtn.dataset.repair = g.id; repairBtn.style.padding='6px 8px'; repairBtn.style.borderRadius='8px'; repairBtn.style.background='var(--btn-bg)'; repairBtn.style.color='var(--accent)';
+    left.appendChild(status); left.appendChild(repairBtn);
+    right.appendChild(slider); right.appendChild(small);
+    row.appendChild(left); row.appendChild(right); controls.appendChild(row);
+  }); }
+
+  // attach handlers safely
+  const addGenBtn = document.getElementById('addGen');
+  if(addGenBtn){ addGenBtn.style.display = 'none'; }
+  const repairAllBtn = document.getElementById('repairAll');
+  if(repairAllBtn){
+    repairAllBtn.addEventListener('click', ()=>{
+      const cost = 100; const msg = document.getElementById('pgMsg');
+      repairAllBtn.disabled = true;
+      try{
+        msg.textContent = 'Repairing...';
+        console.log('Attempting repairAll: money=', money, 'cost=', cost);
+        if(!(typeof money === 'number') || !isFinite(money)){
+          msg.textContent = 'Error: invalid money value'; console.error('Invalid money:', money); return;
+        }
+        if(money < cost){ msg.textContent = 'Need $'+cost+' to repair lines.'; log('Need $'+cost+' to repair lines.'); setTimeout(()=> msg.textContent = '',1600); return; }
+        money -= cost;
+        lines.forEach(l=> l.ok = true);
+        // also repair generators
+        gens.forEach(g=>{ if(g.status==='fault'){ g.status='on'; } });
+        updateUI(); log('Repaired all lines and generators for $'+cost);
+        msg.textContent = 'Repaired all lines and generators for $'+cost;
+        setTimeout(()=> msg.textContent = '',2000);
+      } finally { repairAllBtn.disabled = false; }
+    });
+  }
+
+  // --- Marketing / Advertising ---
+  // create marketing start button in right column
+  const marketingBtn = document.createElement('button'); marketingBtn.id = 'marketingBtn'; marketingBtn.textContent = 'Start Advertising'; marketingBtn.style.marginTop = '8px'; marketingBtn.style.background = 'var(--btn-bg)'; marketingBtn.style.color = 'var(--accent)';
+  const rightCol = document.querySelector('.right'); if(rightCol){ rightCol.insertBefore(marketingBtn, rightCol.querySelector('.btn-row')); }
+
+  // marketing popup (hidden until opened)
+  const marketingPopup = document.createElement('div'); marketingPopup.id = 'marketingPopup'; marketingPopup.className = 'popup'; marketingPopup.style.display = 'none'; marketingPopup.innerHTML = `<div class="popup-card" style="width:520px; max-width:94%; text-align:left"><h3>Advertising Campaign</h3>
+    <div style="font-size:13px; color:var(--muted)">Choose a country and campaign duration. Reach is stochastic and depends on population and duration. Campaigns run over real time; choose speed below.</div>
+    <div style="margin-top:8px"><label style="display:block"><input type="radio" name="mcountry" value="estonia" checked /> Estonia</label><label style="display:block"><input type="radio" name="mcountry" value="latvia" /> Latvia</label><label style="display:block"><input type="radio" name="mcountry" value="lithuania" /> Lithuania</label><label style="display:block"><input type="radio" name="mcountry" value="world" /> World (placeholder)</label></div>
+    <div style="margin-top:8px; display:flex; gap:8px; align-items:center">Duration (hours): <input id="adHours" type="number" min="1" max="168" value="6" style="width:80px; margin-left:8px" /> Speed: <select id="adSpeed"><option value="1">1x (real)</option><option value="4">4x</option><option value="12">12x</option><option value="60">60x</option></select></div>
+    <div style="margin-top:8px">Map preview:</div>
+    <div id="mapPreview" style="width:100%; height:220px; border-radius:8px; margin-top:6px; overflow:hidden"></div>
+    <div style="margin-top:8px"><div style="background:#06121a; border-radius:6px; height:12px; overflow:hidden"><div id="campaignProgress" style="height:100%; width:0%; background:linear-gradient(90deg,#60a5fa,#3b82f6)"></div></div></div>
+    <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:12px"><button id="startAd" style="background:var(--btn-bg); color:var(--accent)">Start Campaign</button><button id="closeAd">Close</button></div>
+  </div>`;
+  document.body.appendChild(marketingPopup);
+
+  // country data (approx populations & house counts)
+  const countries = {
+    estonia: { name:'Estonia', pop:1330000, houses:420000, coords:[120,40,60,60] },
+    latvia: { name:'Latvia', pop:1900000, houses:650000, coords:[200,60,60,80] },
+    lithuania: { name:'Lithuania', pop:2800000, houses:900000, coords:[280,90,70,100] },
+    world: { name:'World', pop:7800000000, houses:2000000000, coords:[40,20,420,160] }
+  };
+
+  // approximate bounding boxes for previews (lat,lng)
+  const countryBBoxes = {
+    estonia: [[57.5, 21.5], [59.8, 28.2]],
+    latvia: [[55.6, 21.6], [58.1, 28.2]],
+    lithuania: [[53.9, 20.9], [56.5, 26.9]],
+    world: [[-60,-180],[85,180]]
+  };
+
+  // Leaflet map instances cache
+  const mapCache = {};
+
+  function ensureLeafletMap(targetId, key){ const el = document.getElementById(targetId); if(!el) return null; if(mapCache[targetId]) return mapCache[targetId]; if(typeof L === 'undefined'){ // fallback to dots preview
+    el.innerHTML = '<div style="padding:18px; color:var(--muted)">Map unavailable (offline). Showing abstract preview.</div>'; return null; }
+    const bbox = countryBBoxes[key] || countryBBoxes['world']; const center = [(bbox[0][0]+bbox[1][0])/2, (bbox[0][1]+bbox[1][1])/2]; const map = L.map(el, { zoomControl:false, attributionControl:false }).setView(center, key==='world'?2:6);
+  // white basemap for a clean 'real-life' style; we still add OSM tiles as optional layer for detail
+  const whiteLayer = L.tileLayer('', { attribution: '' });
+  whiteLayer.addTo(map);
+  // add lightweight OSM layer but keep it muted (optional)
+  const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, opacity: 0.95 });
+  osm.addTo(map);
+    mapCache[targetId] = map; return map; }
+
+  // incremental building loader: queries Overpass by small tiles and streams polygons into the map
+  async function fetchBuildingsFor(key, targetId, opts={maxWays:3000, batchWays:400, tiles:6}){
+    // prefer local bundled Estonia GeoJSON for reliability
+    if(key === 'estonia'){
+      return await loadLocalEstoniaGeoJSON(targetId);
+    }
+    const map = ensureLeafletMap(targetId, key);
+    const el = document.getElementById(targetId);
+    if(!map) return false;
+    const bbox = countryBBoxes[key];
+    const overpass = 'https://overpass-api.de/api/interpreter';
+    // prepare a layer group to collect building polygons
+    if(!map._buildingLayer) map._buildingLayer = L.layerGroup().addTo(map);
+    if(!map._loadedWays) map._loadedWays = new Set();
+    if(!map._loadedCountEl){ // create small counter overlay
+      const ctr = L.control({position:'bottomleft'});
+      ctr.onAdd = function(){ const d = L.DomUtil.create('div','building-count'); d.style.padding='6px 8px'; d.style.background='rgba(4,8,12,0.6)'; d.style.color='var(--muted)'; d.style.fontSize='12px'; d.style.borderRadius='6px'; d.textContent = 'Buildings: 0'; map._loadedCountEl = d; return d; };
+      ctr.addTo(map);
+    }
+
+    // helper: split bbox into grid (cols x rows)
+    function getTiles(bbox, cols, rows){ const [sw, ne] = bbox; const lat0 = sw[0], lon0 = sw[1], lat1 = ne[0], lon1 = ne[1]; const latStep = (lat1-lat0)/rows; const lonStep = (lon1-lon0)/cols; const tiles = []; for(let r=0;r<rows;r++){ for(let c=0;c<cols;c++){ const sLat = lat0 + r*latStep; const wLon = lon0 + c*lonStep; const nLat = sLat + latStep; const eLon = wLon + lonStep; tiles.push([[sLat,wLon],[nLat,eLon]]); } } return tiles; }
+
+    // create tile list
+    const cols = Math.max(1, Math.round(Math.sqrt(opts.tiles))); const rows = Math.max(1, Math.ceil(opts.tiles/cols));
+    const tiles = getTiles(bbox, cols, rows);
+
+    // sequentially fetch tiles, stop when maxWays reached
+    let totalWays = 0; let stopped = false;
+    for(const t of tiles){ if(stopped) break; const sw = t[0].join(','); const ne = t[1].join(','); const query = `[out:json][timeout:25];(way["building"](${sw},${ne});relation["building"](${sw},${ne}););out body;>;out skel qt;`;
+      try{
+        const res = await fetch(overpass, { method:'POST', body: query }); if(!res.ok) { console.warn('Overpass tile failed', res.status); if(res.status === 429){ // too many requests -> stop and mark rate limited
+            if(map && map._loadedCountEl) map._loadedCountEl.textContent = 'Rate limited by Overpass (429)'; map._overpassRateLimited = true; return false; } continue; }
+        const data = await res.json(); const nodes = {}; data.elements.filter(e=> e.type==='node').forEach(n=> nodes[n.id]={lat:n.lat, lon:n.lon}); const ways = data.elements.filter(e=> e.type==='way');
+        for(const w of ways){ if(map._loadedWays.has(w.id)) continue; const coords = (w.nodes||[]).map(id=> nodes[id]).filter(Boolean).map(n=> [n.lat,n.lon]); if(coords.length>2){ L.polygon(coords, { color:'#60a5fa', weight:1, fillOpacity:0.5 }).addTo(map._buildingLayer); map._loadedWays.add(w.id); totalWays++; }
+          if(totalWays >= opts.batchWays) break; }
+        // update counter
+        if(map._loadedCountEl) map._loadedCountEl.textContent = 'Buildings: '+map._loadedWays.size;
+        if(map._loadedWays.size >= opts.maxWays){ stopped = true; break; }
+        // small delay to be gentle to Overpass
+        await new Promise(r=> setTimeout(r, 400));
+  }catch(err){ console.warn('Overpass tile fetch error', err); }
+    }
+    // final check
+    if(map._loadedWays.size === 0){ el.innerHTML = '<div style="padding:16px; color:var(--muted)">Building data unavailable — showing abstract preview.</div>'; return false; }
+    return true;
+  }
+
+  // Load local Estonia GeoJSON (sample/preloaded). Renders buildings and roads with clean styling on the Leaflet map.
+  async function loadLocalEstoniaGeoJSON(targetId){ const map = ensureLeafletMap(targetId, 'estonia'); const el = document.getElementById(targetId); if(!map) return false; try{ const res = await fetch('/data/estonia_buildings_sample.geojson'); if(!res.ok) throw new Error('local data not found'); const geo = await res.json(); // create or replace layer
+      if(map._localLayer) { map.removeLayer(map._localLayer); }
+      map._localLayer = L.geoJSON(geo, {
+        style: function(feature){ if(feature.properties && feature.properties.highway) return { color:'#bfbfbf', weight:2, opacity:0.9 }; return { color:'#0b2833', weight:0.6, fillColor:'#e9f6ff', fillOpacity:0.9 }; },
+        onEachFeature: function(f, layer){ if(f.properties && f.properties.type==='building'){ layer.bindTooltip((f.properties.id||'building'), { permanent:false }); } }
+      }).addTo(map);
+      if(!map._loadedCountEl){ const ctr = L.control({position:'bottomleft'}); ctr.onAdd = function(){ const d = L.DomUtil.create('div','building-count'); d.style.padding='6px 8px'; d.style.background='rgba(255,255,255,0.8)'; d.style.color='#0b2833'; d.style.fontSize='12px'; d.style.borderRadius='6px'; d.textContent = 'Buildings (local): '+ (geo.features.filter(f=> f.properties && f.properties.type==='building').length); map._loadedCountEl = d; return d; }; ctr.addTo(map); }
+      else { map._loadedCountEl.textContent = 'Buildings (local): '+ (geo.features.filter(f=> f.properties && f.properties.type==='building').length); }
+      return true; } catch(e){ console.warn('local estonia geojson load failed', e); return false; } }
+
+  // If no full local GeoJSON is present, generate many small building polygons around Tallinn
+  function generateTallinnBuildings(targetId, count = 2000){ const map = ensureLeafletMap(targetId, 'estonia'); if(!map) return false; // Tallinn center approx
+    const center = [59.4370,24.7536]; const latSpread = 0.06; const lonSpread = 0.08; // bounding box around center
+    if(map._localLayer) { map.removeLayer(map._localLayer); }
+    map._localLayer = L.layerGroup().addTo(map);
+    const layer = map._localLayer;
+    // seeded pseudo-random for reproducibility
+    let seed = 123456;
+    function rnd(){ seed = (seed * 9301 + 49297) % 233280; return seed / 233280; }
+    const polys = [];
+    for(let i=0;i<count;i++){ const lat = center[0] - latSpread/2 + rnd()*latSpread; const lon = center[1] - lonSpread/2 + rnd()*lonSpread; const w = 0.00008 + rnd()*0.00018; const h = 0.00006 + rnd()*0.00014; const baseLat = lat - h/2; const baseLon = lon - w/2; const coords = [[baseLat, baseLon],[baseLat, baseLon + w],[baseLat + h, baseLon + w],[baseLat + h, baseLon],[baseLat, baseLon]]; polys.push(coords); }
+    // add in batches
+    let idx = 0; const batch = 200; function addBatch(){ const end = Math.min(idx + batch, polys.length); for(; idx<end; idx++){ const p = polys[idx]; L.polygon(p, { color:'#0b2833', weight:0.4, fillColor:'#e9f6ff', fillOpacity:0.95 }).addTo(layer); }
+      if(!map._loadedCountEl){ const ctr = L.control({position:'bottomleft'}); ctr.onAdd = function(){ const d = L.DomUtil.create('div','building-count'); d.style.padding='6px 8px'; d.style.background='rgba(255,255,255,0.9)'; d.style.color='#0b2833'; d.style.fontSize='12px'; d.style.borderRadius='6px'; d.textContent = 'Buildings (gen): '+ layer.getLayers().length; map._loadedCountEl = d; return d; }; ctr.addTo(map);
+      } else { map._loadedCountEl.textContent = 'Buildings (gen): '+ layer.getLayers().length; }
+      if(idx < polys.length) setTimeout(addBatch, 80);
+    }
+    addBatch(); return true; }
+
+  // Synthetic/offline building generator (fast, client-side) - creates many small circle markers to simulate houses
+  function syntheticBuildingsFor(key, targetId, count = 2000){ const map = ensureLeafletMap(targetId, key); if(!map) return false; const bbox = countryBBoxes[key]; const sw = bbox[0], ne = bbox[1]; if(!map._buildingLayer) map._buildingLayer = L.layerGroup().addTo(map); const layer = map._buildingLayer; const pts = []; for(let i=0;i<count;i++){ const lat = sw[0] + Math.random()*(ne[0]-sw[0]); const lon = sw[1] + Math.random()*(ne[1]-sw[1]); pts.push([lat,lon]); }
+    // add in batches to avoid blocking UI
+    let idx = 0; const batch = 300; function addBatch(){ const end = Math.min(idx + batch, pts.length); for(; idx<end; idx++){ const p = pts[idx]; const m = L.circleMarker(p, { radius:1.2, color:'#9ee0ff', weight:0.6, fillOpacity:0.9 }); m.addTo(layer); }
+      if(map._loadedCountEl) map._loadedCountEl.textContent = 'Buildings (synthetic): '+layer.getLayers().length;
+      if(idx < pts.length) setTimeout(addBatch, 40);
+    }
+    addBatch(); return true; }
+
+  // attach small controls next to a preview area so user can request more buildings
+  function attachBuildingControls(targetId, key){ const el = document.getElementById(targetId); if(!el) return; const wrapperId = targetId+'-controls'; if(document.getElementById(wrapperId)) return; const wrapper = document.createElement('div'); wrapper.id = wrapperId; wrapper.style.display='flex'; wrapper.style.justifyContent='space-between'; wrapper.style.alignItems='center'; wrapper.style.marginTop='6px'; wrapper.style.gap='8px'; const info = document.createElement('div'); info.textContent = 'Loaded: 0'; info.style.fontSize='12px'; info.style.color='var(--muted)'; const loadMore = document.createElement('button'); loadMore.textContent = 'Load more buildings'; loadMore.style.background='var(--btn-bg)'; loadMore.style.color='var(--accent)'; const loadAll = document.createElement('button'); loadAll.textContent = 'Load up to 3000'; loadAll.style.background='var(--btn-bg)'; loadAll.style.color='var(--accent)'; wrapper.appendChild(info); wrapper.appendChild(loadMore); wrapper.appendChild(loadAll); el.parentNode.insertBefore(wrapper, el.nextSibling);
+    // wire actions
+    loadMore.addEventListener('click', async ()=>{ const map = mapCache[targetId]; if(!map) return; await fetchBuildingsFor(key, targetId, { maxWays: map._loadedWays? map._loadedWays.size + 800 : 800, batchWays: 400, tiles: 8 }); info.textContent = 'Loaded: '+ (map._loadedWays? map._loadedWays.size:0); });
+    loadAll.addEventListener('click', async ()=>{ const map = mapCache[targetId]; if(!map) return; await fetchBuildingsFor(key, targetId, { maxWays: 3000, batchWays: 600, tiles: 18 }); info.textContent = 'Loaded: '+ (map._loadedWays? map._loadedWays.size:0); });
+  const synthBtn = document.createElement('button'); synthBtn.textContent = 'Use synthetic buildings (2k)'; synthBtn.style.background='var(--btn-bg)'; synthBtn.style.color='var(--accent)'; wrapper.appendChild(synthBtn);
+  synthBtn.addEventListener('click', ()=>{ const map = mapCache[targetId]; if(!map) return; syntheticBuildingsFor(key, targetId, 2000); info.textContent = 'Loaded: synthetic'; });
+  // add Tartu generator button (canvas) for many buildings
+  const tartuBtn = document.createElement('button'); tartuBtn.textContent = 'Generate 1,000,000 Tartu buildings (canvas)'; tartuBtn.style.background='var(--btn-bg)'; tartuBtn.style.color='var(--accent)'; wrapper.appendChild(tartuBtn);
+  tartuBtn.addEventListener('click', ()=>{ const map = mapCache[targetId]; if(!map) return; // ask user-friendly count cap
+    const wanted = 1000000; info.textContent = 'Generating '+(wanted).toLocaleString()+' points...'; generateTartuCanvasBuildings(targetId, wanted, (loaded)=>{ info.textContent = 'Rendered: '+loaded.toLocaleString(); }); });
+  }
+
+  // Canvas-based renderer for very many synthetic buildings centered on Tartu
+  function generateTartuCanvasBuildings(targetId, count = 1000000, progressCb){ const map = ensureLeafletMap(targetId, 'estonia'); if(!map) return false; // remove any existing canvas
+    const container = map.getContainer(); let canvas = container.querySelector('.tartu-canvas-overlay'); if(!canvas){ canvas = document.createElement('canvas'); canvas.className = 'tartu-canvas-overlay'; canvas.style.position = 'absolute'; canvas.style.left = '0'; canvas.style.top = '0'; canvas.style.width = '100%'; canvas.style.height = '100%'; canvas.style.pointerEvents = 'none'; container.appendChild(canvas); }
+    const ctx = canvas.getContext('2d'); function resize(){ const rect = container.getBoundingClientRect(); const dpr = window.devicePixelRatio||1; canvas.width = rect.width * dpr; canvas.height = rect.height * dpr; canvas.style.width = rect.width+'px'; canvas.style.height = rect.height+'px'; ctx.setTransform(dpr,0,0,dpr,0,0); }
+    resize(); map.on('resize', resize); map.on('move', draw); map.on('zoom', draw);
+    // generate pseudo-random point coordinates in lat/lng within Tartu bbox
+    const tartuCenter = [58.3776, 26.7290]; const latSpan = 0.14; const lonSpan = 0.2; const pts = new Float32Array(count*2);
+    // seeded random for deterministic layout
+    let seed = 987654321; function rnd(){ seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967295; }
+    for(let i=0;i<count;i++){ const lat = tartuCenter[0] - latSpan/2 + rnd()*latSpan; const lon = tartuCenter[1] - lonSpan/2 + rnd()*lonSpan; pts[i*2] = lat; pts[i*2+1] = lon; }
+    // draw function - project to container points and draw small rects; batched to avoid blocking
+    let rendered = 0; const batch = 5000; function drawBatch(start){ const rect = container.getBoundingClientRect(); ctx.clearRect(0,0,rect.width,rect.height); ctx.fillStyle = '#6fb7ff'; for(let i=0;i<start && i<count;i++){ const lat = pts[i*2], lon = pts[i*2+1]; const p = map.latLngToContainerPoint([lat, lon]); ctx.fillRect(p.x, p.y, 1.2, 1.2); }
+      // draw next batch points
+      const end = Math.min(start+batch, count); for(let i=start;i<end;i++){ const lat = pts[i*2], lon = pts[i*2+1]; const p = map.latLngToContainerPoint([lat, lon]); ctx.fillRect(p.x, p.y, 1.2, 1.2); }
+      rendered = end; if(progressCb) progressCb(rendered);
+      if(end < count) setTimeout(()=> drawBatch(end), 8); }
+    // initial full draw of first portion then continue
+    drawBatch(0);
+    // redraw full overlay on map move/zoom by reprojecting drawn points efficiently: simply clear and draw visible subset
+    function draw(){ // draw all already-generated points in visible bounds (fast enough because canvas already holds precomputed list)
+      ctx.clearRect(0,0,canvas.width,canvas.height); ctx.fillStyle = '#6fb7ff'; const bounds = map.getBounds(); for(let i=0;i<rendered;i++){ const lat = pts[i*2], lon = pts[i*2+1]; if(!bounds.contains([lat, lon])) continue; const p = map.latLngToContainerPoint([lat, lon]); ctx.fillRect(p.x, p.y, 1.2, 1.2); }
+      if(progressCb) progressCb(rendered);
+    }
+    // initial draw on next tick
+    setTimeout(()=>{ draw(); }, 50);
+    return true; }
+
+  function renderMapPreview(key, reachFraction, targetId){ const map = document.getElementById(targetId || 'mapPreview') || document.getElementById('startMap'); if(!map) return; map.innerHTML = ''; const c = countries[key]; if(!c) return; const svgNS='http://www.w3.org/2000/svg'; const svg = document.createElementNS(svgNS,'svg'); svg.setAttribute('width','100%'); svg.setAttribute('height','100%'); svg.setAttribute('viewBox','0 0 480 180');
+    const rect = document.createElementNS(svgNS,'rect'); rect.setAttribute('x', c.coords[0]); rect.setAttribute('y', c.coords[1]); rect.setAttribute('width', c.coords[2]); rect.setAttribute('height', c.coords[3]); rect.setAttribute('fill','#0f2744'); rect.setAttribute('stroke','#244e78'); svg.appendChild(rect);
+    const houses = Math.min(80, Math.round(c.houses / (c.pop/50000)));
+    for(let i=0;i<houses;i++){ const hx = c.coords[0] + 4 + Math.random()*(c.coords[2]-8); const hy = c.coords[1] + 4 + Math.random()*(c.coords[3]-8); const dot = document.createElementNS(svgNS,'rect'); dot.setAttribute('x', hx); dot.setAttribute('y', hy); dot.setAttribute('width',3); dot.setAttribute('height',3); const reached = Math.random() < reachFraction; dot.setAttribute('fill', reached? '#60a5fa' : '#16313f'); svg.appendChild(dot); }
+    map.appendChild(svg);
+  }
+
+  marketingBtn.addEventListener('click', ()=>{ marketingPopup.style.display = 'flex'; renderMapPreview('estonia',0,'mapPreview'); });
+  document.getElementById('closeAd').addEventListener('click', ()=> marketingPopup.style.display = 'none');
+  document.getElementById('startAd').addEventListener('click', async ()=>{
+    const sel = document.querySelector('input[name="mcountry"]:checked').value; const hours = Math.max(1, Math.min(168, Number(document.getElementById('adHours').value)||6)); const speed = Number(document.getElementById('adSpeed').value)||4; const msg = document.getElementById('pgMsg'); const progressEl = document.getElementById('campaignProgress');
+    // cost scaled with population and hours
+    const baseCost = 40; const popMillions = countries[sel].pop/1000000; const cost = Math.round(baseCost * Math.log10(Math.max(10, popMillions + 10)) * (hours/6));
+    if(money < cost){ msg.textContent = 'Need $'+cost+' to start campaign'; log('Not enough money for campaign'); setTimeout(()=>msg.textContent='',1600); return; }
+    money -= cost; updateUI(); log('Started ad campaign in '+countries[sel].name+' for '+hours+'h ($'+cost+')'); msg.textContent = 'Campaign running...'; marketingPopup.style.display = 'flex';
+
+    // prepare map and attempt to fetch building footprints (non-blocking)
+    const didMap = await fetchBuildingsFor(sel, 'mapPreview'); if(!didMap){ renderMapPreview(sel, 0, 'mapPreview'); }
+
+    // run campaign over time: total simulated duration in seconds (hours -> seconds) scaled by speed multiplier
+    const totalSimSeconds = hours * 3600; const runDurationMs = Math.max(1200, (totalSimSeconds / speed) * 1000); // ensure at least 1.2s UI run
+    const startT = performance.now(); let lastUpdate = startT; const interval = 200; // UI tick ms
+    return new Promise(resolve=>{
+      const tick = ()=>{
+        const now = performance.now(); const elapsed = now - startT; const frac = Math.min(1, elapsed / runDurationMs); progressEl.style.width = (frac*100)+'%';
+        // occasional preview update (not too often)
+        if(now - lastUpdate > 800){ lastUpdate = now; renderMapPreview(sel, frac*0.6, 'mapPreview'); }
+        if(frac >= 1){ // compute final outcome
+          const pop = countries[sel].pop; const base = Math.min(0.12, 0.01 * (hours/6)); const variability = (Math.random()*0.8 + 0.6); const reachFraction = Math.min(1, base * variability);
+          const reach = Math.round(pop * reachFraction);
+          const convRate = 0.001 + (hours/168)*0.002; const customers = Math.round(reach * convRate * (0.6 + Math.random()*0.8)); const revenue = customers * 12; money += revenue; updateUI(); log('Campaign ended: reached '+reach.toLocaleString()+' people, gained '+customers+' customers (+$'+revenue+')'); msg.textContent = 'Campaign finished: +$'+revenue; renderMapPreview(sel, Math.min(1, reach / pop), 'mapPreview'); setTimeout(()=> msg.textContent = '',4000);
+          progressEl.style.width = '0%'; marketingPopup.style.display = 'none'; resolve(); return;
+        }
+        setTimeout(tick, interval);
+      };
+      // start
+      tick();
+    });
+  });
+
+    // --- Startup: choose country to start in ---
+    let startingCountry = 'estonia';
+    const startupPopup = document.createElement('div'); startupPopup.className = 'popup'; startupPopup.style.display = 'flex'; startupPopup.style.position = 'fixed'; startupPopup.style.left = '0'; startupPopup.style.top = '0'; startupPopup.style.right = '0'; startupPopup.style.bottom = '0'; startupPopup.style.alignItems = 'center'; startupPopup.style.justifyContent = 'center'; startupPopup.innerHTML = `<div class="popup-card" style="width:520px; max-width:94%; text-align:left"><h3>Choose Starting Country</h3>
+      <div style="font-size:13px; color:var(--muted)">Select the country where you'll begin operations. This affects grid size and visible map.</div>
+      <div style="margin-top:8px"><label style="display:block"><input type="radio" name="startCountry" value="estonia" checked /> Estonia</label><label style="display:block"><input type="radio" name="startCountry" value="latvia" /> Latvia</label><label style="display:block"><input type="radio" name="startCountry" value="lithuania" /> Lithuania</label><label style="display:block"><input type="radio" name="startCountry" value="world" /> World (global)</label></div>
+    <div style="margin-top:8px">Preview:</div>
+    <div id="startMap" style="width:100%; height:220px; border-radius:8px; margin-top:6px; overflow:hidden"></div>
+      <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:12px"><button id="beginBtn" style="background:var(--btn-bg); color:var(--accent)">Begin</button></div>
+    </div>`;
+    document.body.appendChild(startupPopup);
+    // preview initial map in startup popup
+    // ensure maps initialize when Leaflet is available
+    function initPreviews(){ if(typeof L === 'undefined'){ setTimeout(initPreviews, 250); return; } try{ ensureLeafletMap('startMap','estonia'); ensureLeafletMap('mapPreview','estonia'); fetchBuildingsFor('estonia','startMap'); fetchBuildingsFor('estonia','mapPreview'); }catch(e){ console.warn('preview init failed', e); } }
+    initPreviews();
+    // add building controls UI
+    setTimeout(()=>{ attachBuildingControls('startMap','estonia'); attachBuildingControls('mapPreview','estonia'); }, 600);
+    // wire begin
+    document.getElementById('beginBtn').addEventListener('click', ()=>{
+      const sel = document.querySelector('input[name="startCountry"]:checked').value; startingCountry = sel; applyStartingCountry(sel); startupPopup.style.display = 'none'; log('Starting country: '+countries[sel].name);
+    });
+
+    function applyStartingCountry(key){ const c = countries[key] || countries['estonia']; // scale node loads by population ratio
+      const baseline = 2000000; const scale = Math.max(0.35, Math.min(3.5, c.pop / baseline)); nodes.forEach(n=>{ n.load = Math.max(8, Math.round((n.load || 20) * scale)); n.currentLoad = n.load; n.recoverTimer = 0; }); updateUI(totalDemand(), totalSupply()); draw(); // show preview
+      const map = document.getElementById('startMap'); if(map) map.innerHTML=''; renderMapPreview(key, 0);
+    }
+
+  function totalDemand(){ // sum node current loads with a time-varying multiplier
+    const baseStatic = nodes.reduce((s,n)=> s + n.load, 0);
+    const wave = 1 + 0.45*Math.sin(time/30); // slow daily-like variation
+    const spike = (Math.random()<0.03)? (5 + Math.random()*0.6) : 0; // occasional spike factor
+    // apply wave/spike proportionally to each node's configured load, then cap by currentLoad
+    const multiplier = wave * (1 + spike);
+    const total = nodes.reduce((s,n)=> s + Math.min(n.currentLoad, Math.round(n.load * multiplier)), 0);
+    return Math.round(total);
+  }
+
+  function totalSupply(){ return Math.round(gens.reduce((s,g)=> s + (g.status==='on'? g.output:0), 0)); }
+
+  // failure cooldown: at most one failure event per FAILURE_COOLDOWN ms
+  let lastFailureAt = 0;
+  const FAILURE_COOLDOWN = 60 * 1000; // 1 minute
+
+  function simulateStep(dt){ time += dt;
+    // small chance a line fails if loaded over capacity
+    // compute flow simply: assume supply evenly distributed to meet demand at node priorities
+    const demand = totalDemand(); const supply = totalSupply();
+    // determine line overloads
+    lines.forEach(l=>{
+      const loadShare = Math.abs(Math.sin(time + l.a + l.b)) * 100; // synthetic flow
+      // only consider failure when overloaded
+      if(l.ok && loadShare > l.capacity * (0.95)){
+        // small chance per second scaled by dt, and respect global cooldown
+        const lineFailProbPerSec = 0.02; // 2% chance per second when overloaded
+        const now = performance.now();
+        if(Math.random() < lineFailProbPerSec * dt && (now - lastFailureAt) > FAILURE_COOLDOWN){ l.ok = false; lastFailureAt = now; log('Line between '+l.a+'-'+l.b+' failed due to stress'); stability -= 6; }
+      }
+    });
+
+    // if supply < demand then blackouts occur: shed low priority nodes gradually
+    if(supply < demand){
+      const deficit = demand - supply;
+      // reduce stability modestly once per event
+      stability -= Math.min(1 + deficit/80, 4);
+      // auto-shed lowest priority nodes until supply meets demand, but only change nodes that still have recoverable load
+      const sorted = nodes.slice().sort((a,b)=> a.priority - b.priority);
+      let shedAccum = 0;
+      for(const n of sorted){ if(shedAccum >= deficit) break; // target reached
+        if(n.currentLoad <= 0) continue; // already shed
+        const reduce = Math.round(n.load * 0.6); // shed 60% of configured load
+        const actualReduce = Math.min(reduce, n.currentLoad);
+        if(actualReduce <= 0) continue;
+        n.currentLoad -= actualReduce;
+        n.recoverTimer = 8; // seconds until partial recovery begins
+        n.shedCount = (n.shedCount||0) + 1;
+        shedAccum += actualReduce;
+        log('Shed load at node '+n.id+' to stabilize ('+actualReduce+' MW)');
+      }
+    } else {
+      // reward stability slowly
+      stability = Math.min(100, stability + 0.2);
+    }
+
+    // recover node loads over time
+    nodes.forEach(n=>{
+      if(n.recoverTimer > 0){ n.recoverTimer = Math.max(0, n.recoverTimer - dt); }
+      else if(n.currentLoad < n.load){ // gentle recovery
+        n.currentLoad = Math.min(n.load, n.currentLoad + Math.max(1, Math.round(n.load*0.06)) * dt);
+        // only log a single recovery message occasionally
+        if(Math.random() < 0.02) log('Node '+n.id+' recovering load ('+Math.round(n.currentLoad)+' MW)');
+      }
+    });
+    
+
+    // generator random failures (very rare) using per-second failRate and global cooldown
+    const now = performance.now();
+    gens.forEach(g=>{
+      if(g.status==='on'){
+        const p = (g.failRate || 0.0002) * dt; // probability scaled by dt
+        if(Math.random() < p && (now - lastFailureAt) > FAILURE_COOLDOWN){ g.status='fault'; lastFailureAt = now; log(g.name+' experienced a fault'); stability -= 8; }
+      }
+    });
+
+    // scoring and money for meeting demand
+    if(supply >= demand){ money += Math.floor(demand/20); score += 1; }
+    updateUI(demand, supply);
+  }
+
+  function repairGenerator(id){ const g = gens.find(x=> x.id===id); if(!g) return; const cost = 80; if(money < cost){ log('Not enough money to repair generator'); return; } money -= cost; g.status='on'; log('Repaired '+g.name); updateUI(); }
+
+  function updateUI(demand=0, supply=0){ demandEl.textContent = demand + ' MW'; supplyEl.textContent = supply + ' MW'; demandBar.style.width = Math.min(100, Math.round(demand/4)) + '%'; supplyBar.style.width = Math.min(100, Math.round(supply/4)) + '%'; stabilityEl.textContent = Math.max(0, Math.round(stability)); moneyEl.textContent = '$'+Math.floor(money); renderControls(); }
+
+  // draw network
+  function draw(){ const w = canvas.clientWidth; const h = canvas.clientHeight; ctx.clearRect(0,0,w,h); // background
+    // draw lines
+    lines.forEach(l=>{ const a = nodes.find(n=> n.id===l.a); const b = nodes.find(n=> n.id===l.b); ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.strokeStyle = l.ok? 'rgba(96,165,250,0.25)':'rgba(255,100,100,0.85)'; ctx.lineWidth = l.ok? 4:6; ctx.stroke(); // capacity label
+      ctx.fillStyle='rgba(255,255,255,0.06)'; ctx.fillRect((a.x+b.x)/2 - 24, (a.y+b.y)/2 -6, 48,12); ctx.fillStyle='rgba(255,255,255,0.25)'; ctx.font='11px Inter'; ctx.textAlign='center'; ctx.fillText((l.capacity)+' MW', (a.x+b.x)/2, (a.y+b.y)/2 +2);
+    });
+    // draw nodes
+    nodes.forEach(n=>{ ctx.beginPath(); ctx.fillStyle='rgba(20,28,38,0.95)'; ctx.strokeStyle='rgba(255,255,255,0.06)'; ctx.lineWidth=2; ctx.fillRect(n.x-32, n.y-20, 64,40); ctx.strokeRect(n.x-32, n.y-20, 64,40); ctx.fillStyle='var(--accent)'; ctx.font='12px Inter'; ctx.textAlign='center'; ctx.fillText('Node '+n.id, n.x, n.y-2); ctx.fillStyle='var(--muted)'; ctx.font='11px Inter'; ctx.fillText(n.load+' MW', n.x, n.y+12); });
+  }
+
+  // main loop
+  let last = performance.now(); function loop(ts){ const dt = (ts-last)/1000; last = ts; simulateStep(dt); draw(); if(stability <= 0){ log('Stability collapsed — GAME OVER'); cancelAnimationFrame(animId); } else { animId = requestAnimationFrame(loop); } }
+  let animId = requestAnimationFrame(loop);
+
+  // repair on generator rows clickable
+  controls.addEventListener('click', (e)=>{ const target = e.target; if(!target) return; const rep = target.dataset && target.dataset.repair; if(rep){ const id = Number(rep); const g = gens.find(x=> x.id===id); if(!g) return; if(g.status==='fault'){ repairGenerator(id); } else { // toggle generator on/off
+        g.status = g.status==='on'? 'off':'on'; log(g.name + ' turned ' + (g.status==='on'? 'ON':'OFF')); updateUI(); } } });
+
+  // initial UI
+  updateUI(totalDemand(), totalSupply()); draw();
+  </script>
+</body>
+</html>

@@ -7,10 +7,10 @@
 <link rel="stylesheet" href="../css/styles.css" />
 <style>
   body.game-page{ align-items:center; }
-  .wrap{ width:960px; max-width:calc(100% - 40px); margin-top:24px; display:flex; gap:18px; }
+  .wrap{ width:100%; max-width:1200px; margin:24px auto; display:flex; gap:18px; padding:0 12px; box-sizing:border-box }
   .left{ flex:1; position:relative; }
-  canvas{ background:linear-gradient(180deg,#061225,#0a1c34); width:100%; height:auto; border-radius:12px; box-shadow:0 16px 50px rgba(6,18,70,0.6); cursor:crosshair }
-  .panel{ width:300px; background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01)); padding:16px; border-radius:12px; display:flex; flex-direction:column; gap:12px }
+  canvas{ background:#050607; width:100%; height:auto; border-radius:12px; box-shadow:0 12px 30px rgba(0,0,0,0.7); cursor:crosshair; touch-action: manipulation }
+  .panel{ width:300px; background:var(--panel); padding:16px; border-radius:12px; display:flex; flex-direction:column; gap:12px; max-height: calc(100vh - 120px); overflow:auto }
   .panel h2{ margin:0; font-size:18px; font-weight:800; color:var(--accent) }
   button, select{ background:linear-gradient(90deg,#07112a,#0b1220); color:var(--accent); border:none; padding:8px 12px; border-radius:8px; font-weight:700; cursor:pointer }
   .money{ font-size:20px; font-weight:800; color:var(--accent) }
@@ -49,35 +49,58 @@
 </style>
 </head>
 <body class="game-page">
-<a class="home" href="../index.html">← Home</a>
-<div class="title">Server Manager</div>
-<div class="wrap">
+<a class="home" href="../index.html"> Home</a>
+<div class="sidebar-nav">
+  <div class="nav-title">Server Manager</div>
+  <button class="nav-btn" id="navBuy" title="Buy a new server">Buy Server</button>
+  <button class="nav-btn" id="navUpgrades" title="Upgrade security and reliability">Upgrades</button>
+  <button class="nav-btn" id="navStats" title="View stats and logs">Stats</button>
+  <button class="nav-btn" id="navHelp" title="How to play">Help</button>
+</div>
+<div class="wrap with-sidebar">
   <div class="left">
     <div class="room-arrows">
-      <button id="prevRoom" disabled>◀</button>
+      <button id="prevRoom" disabled title="Previous room"></button>
       <div style="font-size:13px; color:var(--muted); font-weight:700" id="roomLabel">Room 1</div>
-      <button id="nextRoom" disabled>▶</button>
+      <button id="nextRoom" disabled title="Next room"></button>
     </div>
-  <div id="buyHint" class="buy-hint">Use the Buy button to fill rack slots ($150)</div>
+    <div id="buyHint" class="buy-hint">Use the Buy button to fill rack slots ($150)</div>
     <canvas id="serverCanvas" width="760" height="480"></canvas>
   </div>
-  <div class="panel">
+  <div class="panel" id="mainPanel">
     <h2>Overview</h2>
-  <div class="money">$<span id="money">200</span></div>
-  <div style="font-size:13px; color:var(--muted)">Income: $<span id="incomeRate">0</span>/s (<span id="incomeMult">x1.00</span>)</div>
+    <div class="money">$<span id="money">200</span></div>
+    <div style="font-size:13px; color:var(--muted)">Income: $<span id="incomeRate">0</span>/s (<span id="incomeMult">x1.00</span>)</div>
     <div class="room-info">Servers in room: <span id="roomCount">0</span>/20<br/>Total servers: <span id="totalServers">0</span></div>
-  <button id="buyServer">Buy Server</button>
-  <div class="mini">(Click crashed servers to repair them)</div>
+    <button id="buyServer" title="Buy a new server">Buy Server</button>
+    <button id="openUpgrades" title="Upgrade security and reliability">Upgrades</button>
+    <div class="mini">(Click crashed servers to repair them)</div>
     <div style="font-weight:800; margin-top:4px">Status Log</div>
-    <div id="log" style="background:#081d36; border:1px solid rgba(255,255,255,0.06); min-height:120px; max-height:160px; overflow:auto; font-size:12px; padding:6px; border-radius:8px"></div>
+  <div id="log" style="background:#0b0b0d; border:1px solid rgba(255,255,255,0.04); min-height:120px; max-height:160px; overflow:auto; font-size:12px; padding:8px; border-radius:8px"></div>
     <div style="font-weight:800">Hints</div>
     <ul style="margin:0 0 6px 16px; padding:0; font-size:12px; line-height:1.5; color:var(--muted)">
-      <li>A server will rarely even crash but when it does → fix it via quick minigame.</li>
-      <li>Stay zoomed in this room; navigate rooms using arrow buttons.</li>
+      <li>A server will rarely crash, but when it does, fix it via a quick minigame.</li>
+      <li>Navigate rooms using the arrow buttons above the rack.</li>
       <li>Max 20 servers per room. New rooms unlock automatically.</li>
-      <li>Keep everything running for passive stability bonuses (later).</li>
+      <li>Keep everything running for passive stability bonuses.</li>
     </ul>
   </div>
+
+<!-- Help Popup -->
+<div id="helpPopup" class="popup">
+  <div class="popup-card" style="width:420px; max-width:92%; text-align:left">
+    <h3>How to Play</h3>
+    <ul style="font-size:13px; color:var(--muted); line-height:1.7;">
+      <li>Buy servers and fill rack slots to earn passive income.</li>
+      <li>Click crashed servers to repair them via minigames.</li>
+      <li>Upgrade security to reduce crashes and hacks.</li>
+      <li>Click a working server to view its specs.</li>
+      <li>Use the navigation bar for quick access to features.</li>
+      <li>Hover over buttons for tooltips.</li>
+    </ul>
+  <div style="display:flex; justify-content:flex-end; margin-top:12px"><button id="closeHelp" style="background:var(--btn-bg); color:var(--accent); border:1px solid rgba(255,255,255,0.03);">Close</button></div>
+  </div>
+</div>
 </div>
 
 <div id="crashPopup" class="popup">
@@ -103,6 +126,15 @@
   </div>
 </div>
 
+<div id="marketPopup" class="popup">
+  <div class="popup-card" style="width:540px; max-width:94%; text-align:left">
+    <h3>Market Trader</h3>
+    <div style="font-size:12px; color:var(--muted); margin-bottom:8px">Trade compute tokens and resources. Prices fluctuate over time.</div>
+    <div id="marketList" style="display:grid; grid-template-columns:1fr auto auto; gap:8px; align-items:center; max-height:320px; overflow:auto"></div>
+    <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:10px"><button id="closeMarket" style="background:#13263e">Close</button></div>
+  </div>
+</div>
+
 <div id="upgradePopup" class="popup">
   <div class="popup-card" style="width:500px; max-width:92%">
     <h3>Security Upgrades</h3>
@@ -125,6 +157,14 @@
 const canvas = document.getElementById('serverCanvas');
 const ctx = canvas.getContext('2d');
 const buyBtn = document.getElementById('buyServer');
+const navBuy = document.getElementById('navBuy');
+const navUpgrades = document.getElementById('navUpgrades');
+const navStats = document.getElementById('navStats');
+const navHelp = document.getElementById('navHelp');
+const openUpgradesBtn = document.getElementById('openUpgrades');
+const mainPanel = document.getElementById('mainPanel');
+const helpPopup = document.getElementById('helpPopup');
+const closeHelpBtn = document.getElementById('closeHelp');
 const moneyEl = document.getElementById('money');
 const incomeRateEl = document.getElementById('incomeRate');
 const incomeMultEl = document.getElementById('incomeMult');
@@ -150,6 +190,12 @@ const closeUpgradesBtn = document.getElementById('closeUpgrades');
 const specPopup = document.getElementById('specPopup');
 const specContent = document.getElementById('specContent');
 const closeSpecBtn = document.getElementById('closeSpec');
+
+// Market elements
+const navMarket = document.getElementById('navMarket');
+const marketPopup = document.getElementById('marketPopup');
+const marketListEl = document.getElementById('marketList');
+const closeMarketBtn = document.getElementById('closeMarket');
 
 let money = 200;
 // Each room: { id, slots:[{x,y,server:null}], servers:[] }
@@ -240,7 +286,31 @@ function purchaseModel(model){
 function openBuyPopup(){ if(!buyPopup) return; renderServerList(); buyPopup.style.display='flex'; }
 function closeBuy(){ buyPopup.style.display='none'; }
 if(closeBuyBtn) closeBuyBtn.addEventListener('click', closeBuy);
+
+// Sidebar navigation logic
+function showPanel(panel) {
+  // Hide all popups
+  buyPopup.style.display = 'none';
+  upgradePopup.style.display = 'none';
+  specPopup.style.display = 'none';
+  helpPopup.style.display = 'none';
+  // Show/hide mainPanel
+  if (panel === 'stats') {
+    mainPanel.style.display = '';
+  } else {
+    mainPanel.style.display = 'none';
+  }
+}
+
+if (navBuy) navBuy.addEventListener('click', () => { showPanel(); openBuyPopup(); });
+if (navUpgrades) navUpgrades.addEventListener('click', () => { showPanel(); openUpgradesPopup(); });
+if (navStats) navStats.addEventListener('click', () => { showPanel('stats'); });
+if (navHelp) navHelp.addEventListener('click', () => { showPanel(); helpPopup.style.display = 'flex'; });
+if (closeHelpBtn) closeHelpBtn.addEventListener('click', () => { helpPopup.style.display = 'none'; showPanel('stats'); });
+
+// Also wire up panel buttons
 if(buyBtn) buyBtn.addEventListener('click', openBuyPopup);
+if(openUpgradesBtn) openUpgradesBtn.addEventListener('click', openUpgradesPopup);
 
 function renderUpgrades(){
   if(!upgradesListEl) return;
@@ -260,6 +330,8 @@ function openUpgradesPopup(){ renderUpgrades(); upgradePopup.style.display='flex
 function closeUpgrades(){ upgradePopup.style.display='none'; }
 if(closeUpgradesBtn) closeUpgradesBtn.addEventListener('click', closeUpgrades);
 if(closeSpecBtn) closeSpecBtn.addEventListener('click', ()=> specPopup.style.display='none');
+if(navMarket) navMarket.addEventListener('click', ()=>{ showPanel(); openMarket(); });
+if(closeMarketBtn) closeMarketBtn.addEventListener('click', ()=> marketPopup.style.display='none');
 
 function randomCrashDelay(){
   // rare: between 35s and 70s
@@ -269,6 +341,84 @@ function randomCrashDelay(){
 function randomHackDelay(){
   // hacking rarer but impactful (60s - 110s)
   return 60 + Math.random()*50;
+}
+
+// --- Market Trader (simple price simulator) ---
+let marketTick = 0;
+const marketItems = [ { id:'compute', name:'Compute Token', price: 10 }, { id:'bandwidth', name:'Bandwidth Pack', price: 6 } ];
+let inventory = { compute:0, bandwidth:0 };
+
+function updateMarketPrices(){
+  marketTick++;
+  marketItems.forEach(it=>{
+    // random walk with slight trend
+    const vol = (it.id==='compute')? 0.12:0.08;
+    const change = (Math.random()-0.5) * vol * it.price;
+    it.price = Math.max(1, +(it.price + change).toFixed(2));
+  });
+  renderMarket();
+}
+
+function renderMarket(){
+  if(!marketListEl) return;
+  marketListEl.innerHTML='';
+  marketItems.forEach(it=>{
+    const row=document.createElement('div'); row.style.display='contents';
+    const name=document.createElement('div'); name.textContent=it.name; name.style.color='var(--muted)'; name.style.padding='6px 0';
+    const price=document.createElement('div'); price.textContent='$'+it.price.toFixed(2); price.style.textAlign='right'; price.style.padding='6px 8px';
+    const actions=document.createElement('div'); actions.style.textAlign='right'; actions.style.padding='6px 8px';
+    const buy=document.createElement('button'); buy.textContent='Buy'; buy.style.marginRight='6px'; buy.addEventListener('click',()=>{ purchaseMarket(it,1); });
+    const sell=document.createElement('button'); sell.textContent='Sell'; sell.addEventListener('click',()=>{ sellMarket(it,1); });
+    actions.appendChild(buy); actions.appendChild(sell);
+    marketListEl.appendChild(name); marketListEl.appendChild(price); marketListEl.appendChild(actions);
+  });
+}
+
+function purchaseMarket(item, qty){ const cost = item.price * qty; if(money < cost){ log('Insufficient funds for purchase'); return; } money -= cost; inventory[item.id] = (inventory[item.id]||0) + qty; updateMoney(); renderMarket(); log('Bought '+qty+' '+item.name+' for $'+cost.toFixed(2)); }
+function sellMarket(item, qty){ if((inventory[item.id]||0) < qty){ log('No inventory to sell'); return; } const gain = item.price * qty; inventory[item.id] -= qty; money += gain; updateMoney(); renderMarket(); log('Sold '+qty+' '+item.name+' for $'+gain.toFixed(2)); }
+
+function openMarket(){ renderMarket(); marketPopup.style.display='flex'; }
+
+// update market periodically
+setInterval(updateMarketPrices, 4200);
+
+// --- DDoS minigame (rhythm/timing) ---
+function buildDdosMinigame(server, highStakes=false){
+  taskArea.innerHTML=''; pendingMinigame=true;
+  const info=document.createElement('div'); info.style.fontSize='13px'; info.style.color='var(--muted)'; info.textContent='DDoS wave incoming — hit the beats to deploy mitigations.'; taskArea.appendChild(info);
+  const bar=document.createElement('div'); bar.style.cssText='height:18px; background:#071327; border-radius:6px; margin-top:10px; position:relative; overflow:hidden'; taskArea.appendChild(bar);
+  const beatCount = 6 + Math.floor(Math.random()*4);
+  const beats = [];
+  for(let i=0;i<beatCount;i++){ const b=document.createElement('div'); b.style.cssText='position:absolute; top:0; bottom:0; width:8px; background:rgba(78,163,255,0.9); left:'+(i*(100/beatCount))+'%'; b.dataset.hit='0'; bar.appendChild(b); beats.push(b); }
+  const marker=document.createElement('div'); marker.style.cssText='position:absolute; top:0; left:0; height:100%; width:4px; background:var(--accent); box-shadow:0 0 8px var(--accent)'; bar.appendChild(marker);
+  let pos=0; let dir=1; const speed = 0.6 + Math.random()*0.6; const start = performance.now(); const duration = 6000; const successNeeded = Math.ceil(beatCount*0.6); let success=0;
+  function anim(ts){ if(!pendingMinigame) return; const elapsed = ts-start; const t = (elapsed/duration); pos = (t % 1); const px = pos * (bar.clientWidth-4); marker.style.left = px+'px'; requestAnimationFrame(anim); }
+  requestAnimationFrame(anim);
+  function key(e){ if(e.code==='Space'){ e.preventDefault(); // evaluate closests beat
+      const mcenter = parseFloat(marker.style.left || '0') + 2;
+      for(const b of beats){ const bLeft = b.offsetLeft; const bRight = bLeft + b.offsetWidth; const tol = 12; if(mcenter >= bLeft - tol && mcenter <= bRight + tol && b.dataset.hit==='0'){ b.dataset.hit='1'; b.style.background='rgba(40,220,120,0.9)'; success++; log('Beat hit '+success+'/'+successNeeded); if(success>=successNeeded){ document.removeEventListener('keydown', key); finishCrash(server); } return; } }
+      // if missed
+      log('Missed beat');
+    } }
+  document.addEventListener('keydown', key);
+  // timeout
+  setTimeout(()=>{ document.removeEventListener('keydown', key); if(success < successNeeded){ failAttempt(server, highStakes); } }, duration+200);
+}
+
+// modify hack flow to sometimes use ddos minigame
+function scheduleHackCheck(dt){
+  hackTimer += dt;
+  if(hackTimer >= nextHackIn){
+    hackTimer=0; nextHackIn = randomHackDelay();
+    const candidates = rooms.flatMap((r,i)=> r.servers.map(s=>({s,roomIndex:i})) ).filter(o=>o.s.state==='alive');
+    if(!candidates.length) return;
+    const pick = candidates[Math.floor(Math.random()*candidates.length)];
+    if(!rollSecurityAvoid(pick.s,'hack')){
+      // 40% of hacks are DDoS rhythm waves (non-destructive if won)
+      if(Math.random() < 0.4){ pick.s.state='dead'; crashedServers.add(pick.s.id); log('DDoS detected on Server #'+pick.s.id+' — mitigate the wave!'); activeCrash={ server: pick.s, roomIndex: pick.roomIndex }; crashServerLabel.textContent='DDoS on #'+pick.s.id; crashPopup.style.display='flex'; buildDdosMinigame(pick.s, false); }
+      else { pick.s.state='dead'; crashedServers.add(pick.s.id); log('HACK detected on Server #'+pick.s.id+' (high-stakes)'); activeCrash={ server: pick.s, roomIndex: pick.roomIndex }; crashServerLabel.textContent='Server #'+pick.s.id+' HACKED!'; crashPopup.style.display='flex'; buildMinigame(pick.s,'code',true); }
+    } else { log('Hack attempt blocked (#'+pick.s.id+')'); }
+  }
 }
 
 function log(msg){
@@ -289,8 +439,31 @@ function computeIncome(){
 }
 function updateIncomeUI(){ const {rate,mult}=computeIncome(); incomeRateEl.textContent=rate.toFixed(1); incomeMultEl.textContent='x'+mult.toFixed(2); }
 
-function resizeCanvas(){ /* already fixed size, keep for future */ }
-window.addEventListener('resize', resizeCanvas);
+function resizeCanvas(){
+  // Ensure crisp rendering on high-DPI displays
+  const dpr = Math.max(1, window.devicePixelRatio || 1);
+  const rect = canvas.getBoundingClientRect();
+  // set the internal pixel buffer to match displayed size * dpr
+  const w = Math.max(100, Math.floor(rect.width));
+  const h = Math.max(100, Math.floor(rect.height || (rect.width*0.6)));
+  if(canvas.width !== Math.floor(w * dpr) || canvas.height !== Math.floor(h * dpr)){
+    canvas.width = Math.floor(w * dpr);
+    canvas.height = Math.floor(h * dpr);
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    // regenerate slots based on new canvas size so positions stay correct
+    rooms.forEach(r=>{ r.slots = generateSlots(); r.servers.forEach(s=>{
+      // reassign server x/y to the slot coordinates for nearest slot
+      const slot = r.slots.find(sl=> !sl.server || sl.server.id===s.id) || r.slots[0];
+      s.x = slot.x; s.y = slot.y;
+      slot.server = s;
+    }); });
+  }
+}
+window.addEventListener('resize', ()=>{ resizeCanvas(); draw(); });
+// run once on load to set proper size
+setTimeout(()=>{ resizeCanvas(); draw(); }, 20);
 
 function room(){ return rooms[currentRoomIndex]; }
 

@@ -1,0 +1,6 @@
+{ "type": "FeatureCollection", "features": [
+  { "type": "Feature", "properties": { "type": "building", "id": "b1" }, "geometry": { "type": "Polygon", "coordinates": [[[24.7536,59.4370],[24.7539,59.4370],[24.7539,59.4373],[24.7536,59.4373],[24.7536,59.4370]]] } },
+  { "type": "Feature", "properties": { "type": "building", "id": "b2" }, "geometry": { "type": "Polygon", "coordinates": [[[24.7562,59.4365],[24.7566,59.4365],[24.7566,59.4369],[24.7562,59.4369],[24.7562,59.4365]]] } },
+  { "type": "Feature", "properties": { "type": "building", "id": "b3" }, "geometry": { "type": "Polygon", "coordinates": [[[24.7550,59.4380],[24.7554,59.4380],[24.7554,59.4383],[24.7550,59.4383],[24.7550,59.4380]]] } },
+  { "type": "Feature", "properties": { "type": "road", "id": "r1", "highway":"residential" }, "geometry": { "type": "LineString", "coordinates": [[24.7520,59.4375],[24.7575,59.4375]] } }
+] }

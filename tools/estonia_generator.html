@@ -1,0 +1,110 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Estonia Buildings Generator</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+  <style>
+    body{ font-family: Inter, Arial, sans-serif; background:#0b0f12; color:#dbeafe; padding:18px }
+    .panel{ background:#071226; padding:12px; border-radius:10px; max-width:1100px; margin:0 auto; }
+    label{ display:block; margin:8px 0 4px }
+    input, select{ padding:8px; border-radius:6px; border:1px solid rgba(255,255,255,0.04); background:#061424; color:#dbeafe }
+    button{ padding:8px 12px; border-radius:8px; background:#0f1724; color:#7dd3fc; border:none; cursor:pointer }
+    #map{ height:560px; margin-top:12px; border-radius:8px; overflow:hidden }
+    .row{ display:flex; gap:12px; align-items:center }
+    .muted{ color:#9aa7b3; font-size:13px }
+    .controls{ display:flex; gap:8px; flex-wrap:wrap }
+  </style>
+</head>
+<body>
+  <div class="panel">
+    <h2>Estonia Buildings GeoJSON Generator</h2>
+    <p class="muted">Generates synthetic building centroids for Estonia (points). Preview uses clustering and sampling so the map stays responsive. Download the generated GeoJSON when ready.</p>
+    <div class="row">
+      <div style="flex:1">
+        <label>City / Area</label>
+        <select id="citySelect"><option value="tartu">Tartu</option><option value="tallinn">Tallinn</option></select>
+        <label>Count (number of building points)</label>
+        <input id="count" type="number" value="200000" min="1000" max="2000000" />
+        <label>Preview sample size (how many points to render in preview)</label>
+        <input id="previewSize" type="number" value="5000" min="100" max="200000" />
+        <div style="margin-top:8px" class="controls">
+          <button id="generateBtn">Generate GeoJSON</button>
+          <button id="previewBtn">Preview Sample</button>
+          <button id="downloadBtn" disabled>Download GeoJSON</button>
+          <button id="clearBtn">Clear Map</button>
+        </div>
+        <div id="status" class="muted" style="margin-top:8px">Ready</div>
+      </div>
+      <div style="width:420px">
+        <label>Options</label>
+        <div class="muted">Grouping on the map is handled by marker clustering when zoomed out. The generator creates point centroids (lightweight). For very large counts, generation may take time.</div>
+        <label style="margin-top:8px">Seed (optional)</label>
+        <input id="seed" type="text" placeholder="random seed (leave blank for random)" />
+      </div>
+    </div>
+    <div id="map"></div>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+  <script>
+    // Small helper generator UI and logic
+    const cities = {
+      tartu: { name:'Tartu', bbox: [[58.21,26.62],[58.53,26.86]] },
+      tallinn: { name:'Tallinn', bbox: [[59.36,24.66],[59.50,24.92]] }
+    };
+
+    const map = L.map('map', { zoomControl:true }).setView([58.3776,26.7290], 12);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+
+    let generatedGeo = null;
+    let markersLayer = null;
+
+    function seededRandom(seed){ let s = seed>>>0; return function(){ s = Math.imul(1664525, s) + 1013904223; return ((s >>> 0) / 4294967295); } }
+
+    function generatePoints(cityKey, count, seedVal){ const bbox = cities[cityKey].bbox; const rng = seedVal ? seededRandom(Number(seedVal)|0) : Math.random; const lat0 = bbox[0][0], lon0 = bbox[0][1], lat1 = bbox[1][0], lon1 = bbox[1][1]; const features = []; for(let i=0;i<count;i++){ const lat = lat0 + (rng() * (lat1-lat0)); const lon = lon0 + (rng() * (lon1-lon0)); features.push({ type:'Feature', properties: { id: 'b'+i, city: cityKey }, geometry: { type:'Point', coordinates: [lon, lat] } }); if(i%50000===0 && i>0) console.log('generated', i); } return { type:'FeatureCollection', features } }
+
+    function previewSample(geojson, sampleSize){ // sample uniformly
+      if(markersLayer){ map.removeLayer(markersLayer); markersLayer = null; }
+      const sample = sampleSize >= geojson.features.length ? geojson.features : shuffle(geojson.features).slice(0, sampleSize);
+      const markers = L.markerClusterGroup();
+      for(const f of sample){ const m = L.circleMarker([f.geometry.coordinates[1], f.geometry.coordinates[0]], { radius:2, fillColor:'#4fc3f7', color:'#0284c7', weight:0.5, fillOpacity:0.9 }); markers.addLayer(m); }
+      markersLayer = markers; map.addLayer(markersLayer); map.fitBounds(getFeaturesBounds(sample));
+    }
+
+    function getFeaturesBounds(features){ if(!features || features.length===0) return [[0,0],[0,0]]; let minLat=90, minLon=180, maxLat=-90, maxLon=-180; for(const f of features){ const lat = f.geometry.coordinates[1], lon = f.geometry.coordinates[0]; if(lat<minLat) minLat=lat; if(lat>maxLat) maxLat=lat; if(lon<minLon) minLon=lon; if(lon>maxLon) maxLon=lon; } return [[minLat,minLon],[maxLat,maxLon]]; }
+
+    function shuffle(arr){ // Durstenfeld shuffle copy
+      const a = arr.slice(); for(let i=a.length-1;i>0;i--){ const j = Math.floor(Math.random()*(i+1)); const t=a[i]; a[i]=a[j]; a[j]=t; } return a; }
+
+    document.getElementById('generateBtn').addEventListener('click', ()=>{
+      const city = document.getElementById('citySelect').value; const count = Number(document.getElementById('count').value)||200000; const seedVal = document.getElementById('seed').value || null; document.getElementById('status').textContent = 'Generating '+count.toLocaleString()+' points for '+cities[city].name+'...'; setTimeout(()=>{
+        generatedGeo = generatePoints(city, count, seedVal);
+        document.getElementById('status').textContent = 'Generated '+generatedGeo.features.length.toLocaleString()+' features'; document.getElementById('downloadBtn').disabled = false; document.getElementById('downloadBtn').dataset.filename = cities[city].name + '_buildings_'+generatedGeo.features.length+'.geojson';
+      }, 20);
+    });
+
+    document.getElementById('previewBtn').addEventListener('click', ()=>{
+      if(!generatedGeo){ document.getElementById('status').textContent = 'No generated data yet — generating a small preview...'; const city = document.getElementById('citySelect').value; const sample = generatePoints(city, Number(document.getElementById('previewSize').value)||5000, document.getElementById('seed').value||null); previewSample(sample, Number(document.getElementById('previewSize').value)||5000); document.getElementById('status').textContent = 'Previewing sample'; return; }
+      const sampleSize = Number(document.getElementById('previewSize').value)||5000; previewSample(generatedGeo, sampleSize); document.getElementById('status').textContent = 'Previewing '+sampleSize.toLocaleString()+' sample points';
+    });
+
+    document.getElementById('clearBtn').addEventListener('click', ()=>{ if(markersLayer) map.removeLayer(markersLayer); markersLayer = null; document.getElementById('status').textContent = 'Cleared map'; });
+
+    document.getElementById('downloadBtn').addEventListener('click', ()=>{
+      if(!generatedGeo){ document.getElementById('status').textContent = 'No data to download — generate first'; return; }
+      const blob = new Blob([JSON.stringify(generatedGeo)], { type: 'application/geo+json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = document.getElementById('downloadBtn').dataset.filename || 'estonia_buildings.geojson'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url); document.getElementById('status').textContent = 'Download started';
+    });
+
+    // fit to selected city when changed
+    document.getElementById('citySelect').addEventListener('change', (e)=>{ const city = e.target.value; const b = cities[city].bbox; map.fitBounds([[b[0][0],b[0][1]],[b[1][0],b[1][1]]]); });
+
+    // initial view
+    map.fitBounds(cities.tartu.bbox);
+  </script>
+</body>
+</html>
